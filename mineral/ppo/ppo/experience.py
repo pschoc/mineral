@@ -1,3 +1,5 @@
+import re
+
 import torch
 from torch.utils.data import Dataset
 
@@ -14,25 +16,23 @@ def transform_op(arr):
 
 class ExperienceBuffer(Dataset):
     def __init__(
-        self, num_envs, horizon_length, batch_size, minibatch_size, obs_dim, act_dim, device):
+        self, num_envs, horizon_length, batch_size, minibatch_size, obs_space, act_dim, device, cpu_obs_keys):
         self.device = device
         self.num_envs = num_envs
         self.transitions_per_env = horizon_length
+        self.cpu_obs_keys = cpu_obs_keys
 
         self.data_dict = None
-        self.obs_dim = obs_dim
+        self.obs_space = obs_space
         self.act_dim = act_dim
         self.storage_dict = {
-            'obses': torch.zeros(
-                (self.transitions_per_env, self.num_envs, self.obs_dim),
-                dtype=torch.float32, device=self.device),
             'rewards': torch.zeros(
                 (self.transitions_per_env, self.num_envs, 1),
                 dtype=torch.float32, device=self.device),
             'values': torch.zeros(
-                (self.transitions_per_env, self.num_envs,  1),
+                (self.transitions_per_env, self.num_envs, 1),
                 dtype=torch.float32, device=self.device),
-            'neglogpacs': torch.zeros(
+            'neglogp': torch.zeros(
                 (self.transitions_per_env, self.num_envs),
                 dtype=torch.float32, device=self.device),
             'dones': torch.zeros(
@@ -48,9 +48,17 @@ class ExperienceBuffer(Dataset):
                 (self.transitions_per_env, self.num_envs, self.act_dim),
                 dtype=torch.float32, device=self.device),
             'returns': torch.zeros(
-                (self.transitions_per_env, self.num_envs,  1),
+                (self.transitions_per_env, self.num_envs, 1),
                 dtype=torch.float32, device=self.device),
         }
+
+        obs_dict = {}
+        for k, v in self.obs_space.items():
+            buffer = torch.zeros(
+                (self.transitions_per_env, self.num_envs, *v),
+                dtype=torch.float32, device=self.device if not re.match(self.cpu_obs_keys, k) else 'cpu')
+            obs_dict[k] = buffer
+        self.storage_dict['obses'] = obs_dict
 
         self.batch_size = batch_size
         self.minibatch_size = minibatch_size
@@ -70,7 +78,7 @@ class ExperienceBuffer(Dataset):
                 input_dict[k] = v_dict
             else:
                 input_dict[k] = v[start:end]
-        return input_dict['values'], input_dict['neglogpacs'], input_dict['advantages'], \
+        return input_dict['values'], input_dict['neglogp'], input_dict['advantages'], \
             input_dict['mus'], input_dict['sigmas'], input_dict['returns'], input_dict['actions'], \
             input_dict['obses']
 
@@ -105,7 +113,12 @@ class ExperienceBuffer(Dataset):
     def prepare_training(self):
         self.data_dict = {}
         for k, v in self.storage_dict.items():
-            self.data_dict[k] = transform_op(v)
+            if isinstance(v, dict):
+                self.data_dict[k] = {}
+                for kd, vd in v.items():
+                    self.data_dict[k][kd] = transform_op(vd)
+            else:
+                self.data_dict[k] = transform_op(v)
         advantages = self.data_dict['returns'] - self.data_dict['values']
         self.data_dict['advantages'] = (
             (advantages - advantages.mean()) / (advantages.std() + 1e-8)).squeeze(1)

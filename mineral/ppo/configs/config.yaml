@@ -38,26 +38,37 @@ checkpoint: ''
 # set to True to use multi-gpu horovod training
 multi_gpu: False
 
-# output dir name
-# output_name: 'debug'
-output_name: ${task.name}
+# logdir: 'debug'
+logdir: 'workdir/${task.name}'
 
-wandb_mode: "disabled"  # "online" | "offline" | "disabled"
-wandb_entity: 'user_name'
-wandb_project: 'project_name'
+wandb:
+  mode: offline  # online | offline | disabled
+  project: project_name
+  group: group_name
+  resume: allow
+  # save_code: True
 
 # disables rendering
 headless: True
+
+# whether to call env.render(mode='rgb_array')
+env_render: False
 
 # set default task and default training config based on task
 defaults:
   - task: Cartpole
   - train: ${task}PPO
+
   - hydra/job_logging: disabled
+  # - override hydra/job_logging: colorlog
+  # - override hydra/hydra_logging: colorlog
 
 # set the directory where the output files get saved
 hydra:
   output_subdir: null
   run:
     dir: .
-
+  job_logging:
+    formatters:
+      simple:
+        format: "[%(levelname)s: %(module)s:%(lineno)d %(asctime)s] %(message)s"

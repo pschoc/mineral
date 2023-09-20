@@ -5,32 +5,40 @@ network:
   mlp:
     units: [32, 32]
   separate_value_mlp: True
+  act_type: ELU
+  norm_type: null
 
 ppo:
   name: ${resolve_default:Cartpole,${...experiment}}
   multi_gpu: ${...multi_gpu}
+  num_actors: ${...task.env.numEnvs}
   normalize_input: True
   normalize_value: True
   value_bootstrap: True
-  num_actors: ${...task.env.numEnvs}
-  reward_scale_value: 0.1
+  reward_shaper:
+    fn: scale
+    scale: 0.1
   clip_value_loss: False
   normalize_advantage: True
   gamma: 0.99
   tau: 0.95
   learning_rate: 3e-4
+  adam_eps: 1e-5
   lr_schedule: kl  # 'fixed' | 'linear' | 'kl' | 'cos'
   kl_threshold: 0.008
   save_best_after: 500
-  save_frequency: 200
+  save_frequency: 100
+  save_video_every: 0
+  save_video_consecutive: 0
   grad_norm: 1.0
   entropy_coef: 0.0
   truncate_grads: True
   e_clip: 0.2
+  use_smooth_clamp: False
   horizon_length: 16
   minibatch_size: 8192
   mini_epochs: 8
   critic_coef: 4
-  clip_value: True
   bounds_loss_coef: 0.0001
+  bounds_type: bound
   max_agent_steps: 1200000
