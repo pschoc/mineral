@@ -37,6 +37,28 @@ class TensorboardWriter(AsyncOutput):
         except ImportError:
             self.writer.add_hparams(flat_config, {})
 
+    def _write(self, summaries):
+        for step, name, value in summaries:
+            try:
+                value = np.asarray(value)
+
+                if len(value.shape) == 0:
+                    self.writer.add_scalar(name, value, step)
+                elif len(value.shape) == 1:
+                    self.writer.add_histogram(name, value, step)
+                elif len(value.shape) == 3 and value.shape[-1] == 3:
+                    # pointcloud
+                    self.writer.add_mesh(name, value, global_step=step)
+                elif len(value.shape) == 5:
+                    self.add_video(name, value, step)
+                    # value = value.transpose(0, 1, 4, 2, 3)  # -> (B, T, C, H, W)
+                    # self.writer.add_video(name, value, step)
+
+            except Exception:
+                print('Error writing summary:', name)
+                raise
+        # self.writer.flush()
+
     def add_video(self, tag, vid_tensor, global_step=None, walltime=None, fps=8):
         from tensorboard.compat.proto.summary_pb2 import Summary
 
@@ -75,26 +97,6 @@ class TensorboardWriter(AsyncOutput):
             return Summary(value=[Summary.Value(tag=tag, image=image)])
 
         self.writer._get_file_writer().add_summary(video(tag, vid_tensor, fps), global_step, walltime)
-
-    def _write(self, summaries):
-        for step, name, value in summaries:
-            try:
-                value = np.asarray(value)
-
-                if len(value.shape) == 0:
-                    self.writer.add_scalar(name, value, step)
-                elif len(value.shape) == 1:
-                    # histogram(name, value, step)
-                    raise NotImplementedError
-                elif len(value.shape) == 5:
-                    self.add_video(name, value, step)
-                    # value = value.transpose(0, 1, 4, 2, 3)  # -> (B, T, C, H, W)
-                    # self.writer.add_video(name, value, step)
-
-            except Exception:
-                print('Error writing summary:', name)
-                raise
-        # self.writer.flush()
 
 
 class WandbWriter:

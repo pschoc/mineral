@@ -249,6 +249,8 @@ class PPO(ActorCriticBase):
                 train_result['entropy'].append(entropy)
                 train_result['clip_frac'].append(clip_frac)
                 train_result['explained_var'].append(explained_var)
+                train_result['mu'].append(mu.detach())
+                train_result['sigma'].append(sigma.detach())
                 if self.truncate_grads:
                     train_result['grad_norm/all'].append(grad_norm_all.item())
 
