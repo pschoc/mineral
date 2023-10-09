@@ -1,3 +1,4 @@
+import collections
 import re
 import time
 from copy import deepcopy
@@ -189,27 +190,33 @@ class DDPG(ActorCriticBase):
                 for k, v in obs.items():
                     self.obs_rms[k].update(v)
             if random:
-                action = torch.rand((self.num_actors, self.action_dim), device=self.device) * 2.0 - 1.0
+                actions = torch.rand((self.num_actors, self.action_dim), device=self.device) * 2.0 - 1.0
             else:
-                action = self.get_actions(obs, sample=True)
+                actions = self.get_actions(obs, sample=True)
 
-            next_obs, reward, done, info = env.step(action)
+            next_obs, rewards, dones, infos = env.step(actions)
             next_obs = self._convert_obs(next_obs)
 
-            done_indices = torch.where(done)[0].tolist()
-            self.update_tracker(reward, done_indices, info)
+            done_indices = torch.where(dones)[0].tolist()
+            save_video = (self.save_video_every) > 0 and (self.epoch_num % self.save_video_every < self.save_video_consecutive)
+            self.update_tracker(rewards, done_indices, infos, save_video=save_video)
             if self.ddpg_config.handle_timeout:
-                done = handle_timeout(done, info)
+                dones = handle_timeout(dones, infos)
 
             for k, v in obs.items():
                 traj_obs[k][:, i] = v
-            traj_actions[:, i] = action
-            traj_dones[:, i] = done
-            traj_rewards[:, i] = reward
+            traj_actions[:, i] = actions
+            traj_dones[:, i] = dones
+            traj_rewards[:, i] = rewards
             for k, v in next_obs.items():
-                traj_next_obs[k][:, i] = v.clone()
+                traj_next_obs[k][:, i] = v
             obs = next_obs
         self.obs = obs
+
+        if self.save_video_every > 0:
+            if (self.epoch_num % self.save_video_every) == (self.save_video_consecutive - 1):
+                self._info_video = {f'video/{k}': np.concatenate(v, 1) for k, v in self._video_buf.items()}
+                self._video_buf = collections.defaultdict(list)
 
         traj_rewards = self.reward_shaper(traj_rewards.reshape(self.num_actors, timesteps, 1))
         traj_dones = traj_dones.reshape(self.num_actors, timesteps, 1)
@@ -218,32 +225,42 @@ class DDPG(ActorCriticBase):
         return data, timesteps * self.num_actors
 
     def update_net(self, memory):
-        critic_loss_list = list()
-        actor_loss_list = list()
+        train_result = collections.defaultdict(list)
         for i in range(self.ddpg_config.mini_epochs):
             obs, action, reward, next_obs, done = memory.sample_batch(self.ddpg_config.batch_size)
+
             if self.normalize_input:
                 obs = {k: self.obs_rms[k].normalize(v) for k, v in obs.items()}
                 next_obs = {k: self.obs_rms[k].normalize(v) for k, v in next_obs.items()}
             obs, next_obs = obs['obs'], next_obs['obs']
+
             critic_loss, critic_grad_norm = self.update_critic(obs, action, reward, next_obs, done)
-            critic_loss_list.append(critic_loss)
+            train_result["critic_loss"].append(critic_loss)
+            train_result["critic_grad_norm"].append(critic_grad_norm)
 
             actor_loss, actor_grad_norm = self.update_actor(obs)
-            actor_loss_list.append(actor_loss)
+            train_result["actor_loss"].append(actor_loss)
+            train_result["actor_grad_norm"].append(actor_grad_norm)
 
             soft_update(self.critic_target, self.critic, self.ddpg_config.tau)
             if not self.ddpg_config.no_tgt_actor:
                 soft_update(self.actor_target, self.actor, self.ddpg_config.tau)
 
-        log_info = {
-            "train/critic_loss": np.mean(critic_loss_list),
-            "train/actor_loss": np.mean(actor_loss_list),
+        train_result = {k: torch.stack(v) for k, v in train_result.items()}
+        return self.summary_stats(train_result)
+
+    def summary_stats(self, train_result):
+        metrics = {
             "metrics/episode_rewards": self.episode_rewards.mean(),
             "metrics/episode_lengths": self.episode_lengths.mean(),
         }
-        # self.add_info_tracker_log(log_info)
-        return log_info
+        log_dict = {
+            "train/loss/actor": torch.mean(train_result["actor_loss"]).item(),
+            "train/loss/critic": torch.mean(train_result["critic_loss"]).item(),
+            "train/grad_norm/actor": torch.mean(train_result["actor_grad_norm"]).item(),
+            "train/grad_norm/critic": torch.mean(train_result["critic_grad_norm"]).item(),
+        }
+        return {**metrics, **log_dict}
 
     def update_critic(self, obs, action, reward, next_obs, done):
         with torch.no_grad():
@@ -255,7 +272,7 @@ class DDPG(ActorCriticBase):
         critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
         grad_norm = self.optimizer_update(self.critic_optimizer, critic_loss)
 
-        return critic_loss.item(), grad_norm
+        return critic_loss, grad_norm
 
     def update_actor(self, obs):
         self.critic.requires_grad_(False)
@@ -264,7 +281,7 @@ class DDPG(ActorCriticBase):
         actor_loss = -Q.mean()
         grad_norm = self.optimizer_update(self.actor_optimizer, actor_loss)
         self.critic.requires_grad_(True)
-        return actor_loss.item(), grad_norm
+        return actor_loss, grad_norm
 
     def train(self):
         _t = time.perf_counter()
