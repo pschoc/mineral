@@ -1,26 +1,19 @@
 import torch
 
-from pql.replay.simple_replay import create_buffer
+from .simple_replay import create_buffer
 
 
 class NStepReplay:
-    def __init__(self, obs_dim: int,
-                 action_dim: int,
-                 num_envs: int = 1,
-                 nstep: int = 3,
-                 device: str = 'cuda',
-                 gamma: float = 0.99
-                 ):
+    def __init__(
+        self, obs_dim: int, action_dim: int, num_envs: int = 1, nstep: int = 3, device: str = 'cuda', gamma: float = 0.99
+    ):
         self.num_envs = num_envs
         self.nstep = nstep
-        ret = create_buffer(capacity=(self.num_envs, self.nstep),
-                            obs_dim=obs_dim, action_dim=action_dim,
-                            device=device)
-        self.nstep_buf_obs, self.nstep_buf_action, self.nstep_buf_next_obs, \
-        self.nstep_buf_reward, self.nstep_buf_done = ret
+        ret = create_buffer(capacity=(self.num_envs, self.nstep), obs_dim=obs_dim, action_dim=action_dim, device=device)
+        self.nstep_buf_obs, self.nstep_buf_action, self.nstep_buf_next_obs, self.nstep_buf_reward, self.nstep_buf_done = ret
         self.nstep_count = 0
         self.gamma = gamma
-        self.gamma_array = torch.tensor([self.gamma ** i for i in range(self.nstep)]).to(device).view(-1, 1)
+        self.gamma_array = torch.tensor([self.gamma**i for i in range(self.nstep)]).to(device).view(-1, 1)
 
     @torch.no_grad()
     def add_to_buffer(self, obs, actions, rewards, next_obs, dones):
@@ -38,15 +31,23 @@ class NStepReplay:
 
                 obs_list.append(self.nstep_buf_obs[:, 0])
                 action_list.append(self.nstep_buf_action[:, 0])
-                reward, next_ob, done = compute_nstep_return(nstep_buf_next_obs=self.nstep_buf_next_obs,
-                                                             nstep_buf_done=self.nstep_buf_done,
-                                                             nstep_buf_reward=self.nstep_buf_reward,
-                                                             gamma_array=self.gamma_array)
+                reward, next_ob, done = compute_nstep_return(
+                    nstep_buf_next_obs=self.nstep_buf_next_obs,
+                    nstep_buf_done=self.nstep_buf_done,
+                    nstep_buf_reward=self.nstep_buf_reward,
+                    gamma_array=self.gamma_array,
+                )
                 reward_list.append(reward)
                 next_obs_list.append(next_ob)
                 done_list.append(done)
 
-            return torch.cat(obs_list), torch.cat(action_list), torch.cat(reward_list), torch.cat(next_obs_list), torch.cat(done_list)
+            return (
+                torch.cat(obs_list),
+                torch.cat(action_list),
+                torch.cat(reward_list),
+                torch.cat(next_obs_list),
+                torch.cat(done_list),
+            )
         else:
             return obs, actions, rewards, next_obs, dones
 
@@ -69,8 +70,7 @@ def compute_nstep_return(nstep_buf_next_obs, nstep_buf_done, nstep_buf_reward, g
     next_obs[buf_done_envs] = nstep_buf_next_obs[buf_done_envs, buf_done_steps[buf_done_envs]].clone()
 
     mask = torch.ones(buf_done.shape, device=buf_done.device, dtype=torch.bool)
-    mask[buf_done_envs] = torch.arange(mask.shape[1],
-                                       device=buf_done.device) <= buf_done_steps[buf_done_envs][:, None]
+    mask[buf_done_envs] = torch.arange(mask.shape[1], device=buf_done.device) <= buf_done_steps[buf_done_envs][:, None]
     discounted_rewards = nstep_buf_reward * gamma_array
     discounted_rewards = (discounted_rewards * mask.unsqueeze(-1)).sum(1)
     return discounted_rewards, next_obs, done

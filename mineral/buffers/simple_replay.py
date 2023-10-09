@@ -5,21 +5,16 @@ def create_buffer(capacity, obs_dim, action_dim, device='cuda'):
     if isinstance(capacity, int):
         capacity = (capacity,)
     buf_obs_size = (*capacity, obs_dim) if isinstance(obs_dim, int) else (*capacity, *obs_dim)
-    buf_obs = torch.empty(buf_obs_size,
-                          dtype=torch.float32, device=device)
-    buf_action = torch.empty((*capacity, int(action_dim)),
-                             dtype=torch.float32, device=device)
-    buf_reward = torch.empty((*capacity, 1),
-                             dtype=torch.float32, device=device)
-    buf_next_obs = torch.empty(buf_obs_size,
-                               dtype=torch.float32, device=device)
-    buf_done = torch.empty((*capacity, 1),
-                           dtype=torch.bool, device=device)
+    buf_obs = torch.empty(buf_obs_size, dtype=torch.float32, device=device)
+    buf_action = torch.empty((*capacity, int(action_dim)), dtype=torch.float32, device=device)
+    buf_reward = torch.empty((*capacity, 1), dtype=torch.float32, device=device)
+    buf_next_obs = torch.empty(buf_obs_size, dtype=torch.float32, device=device)
+    buf_done = torch.empty((*capacity, 1), dtype=torch.bool, device=device)
     return buf_obs, buf_action, buf_next_obs, buf_reward, buf_done
 
 
 class ReplayBuffer:
-    def __init__(self, capacity: int, obs_dim: int, action_dim: int, device='cpu'):
+    def __init__(self, obs_dim: int, action_dim: int, capacity: int, device='cpu'):
         self.obs_dim = obs_dim
         if isinstance(obs_dim, int):
             self.obs_dim = (self.obs_dim,)
@@ -46,11 +41,11 @@ class ReplayBuffer:
         if p > self.capacity:
             self.if_full = True
 
-            self.buf_obs[self.next_p:self.capacity] = obs[:self.capacity - self.next_p]
-            self.buf_action[self.next_p:self.capacity] = actions[:self.capacity - self.next_p]
-            self.buf_reward[self.next_p:self.capacity] = rewards[:self.capacity - self.next_p]
-            self.buf_next_obs[self.next_p:self.capacity] = next_obs[:self.capacity - self.next_p]
-            self.buf_done[self.next_p:self.capacity] = dones[:self.capacity - self.next_p]
+            self.buf_obs[self.next_p : self.capacity] = obs[: self.capacity - self.next_p]
+            self.buf_action[self.next_p : self.capacity] = actions[: self.capacity - self.next_p]
+            self.buf_reward[self.next_p : self.capacity] = rewards[: self.capacity - self.next_p]
+            self.buf_next_obs[self.next_p : self.capacity] = next_obs[: self.capacity - self.next_p]
+            self.buf_done[self.next_p : self.capacity] = dones[: self.capacity - self.next_p]
 
             p = p - self.capacity
             self.buf_obs[0:p] = obs[-p:]
@@ -59,11 +54,11 @@ class ReplayBuffer:
             self.buf_next_obs[0:p] = next_obs[-p:]
             self.buf_done[0:p] = dones[-p:]
         else:
-            self.buf_obs[self.next_p:p] = obs
-            self.buf_action[self.next_p:p] = actions
-            self.buf_reward[self.next_p:p] = rewards
-            self.buf_next_obs[self.next_p:p] = next_obs
-            self.buf_done[self.next_p:p] = dones
+            self.buf_obs[self.next_p : p] = obs
+            self.buf_action[self.next_p : p] = actions
+            self.buf_reward[self.next_p : p] = rewards
+            self.buf_next_obs[self.next_p : p] = next_obs
+            self.buf_done[self.next_p : p] = dones
 
         self.next_p = p  # update pointer
         self.cur_capacity = self.capacity if self.if_full else self.next_p
@@ -76,5 +71,5 @@ class ReplayBuffer:
             self.buf_action[indices].to(device),
             self.buf_reward[indices].to(device),
             self.buf_next_obs[indices].to(device),
-            self.buf_done[indices].to(device).float()
+            self.buf_done[indices].to(device).float(),
         )
