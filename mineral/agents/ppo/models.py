@@ -43,7 +43,7 @@ class ActorCritic(nn.Module):
     def __init__(self, obs_space, action_dim, config):
         super().__init__()
         self.separate_value_mlp = config.separate_value_mlp
-        self.actor_input_ind_std = config.actor_input_ind_std
+        self.fixed_sigma = config.fixed_sigma
         self.act_type = config.act_type
         self.norm_type = config.norm_type
         self.units = config.mlp.units
@@ -62,7 +62,7 @@ class ActorCritic(nn.Module):
         self.value = torch.nn.Linear(out_size, 1)
         self.mu = torch.nn.Linear(out_size, action_dim)
 
-        if self.actor_input_ind_std:
+        if self.fixed_sigma:
             self.sigma = nn.Parameter(torch.zeros(action_dim, requires_grad=True, dtype=torch.float32), requires_grad=True)
         else:
             self.sigma = torch.nn.Linear(out_size, action_dim)
@@ -94,7 +94,7 @@ class ActorCritic(nn.Module):
         # policy output layer with scale 0.01
         nn.init.orthogonal_(self.value.weight, gain=1.0)
         nn.init.orthogonal_(self.mu.weight, gain=0.01)
-        if self.actor_input_ind_std:
+        if self.fixed_sigma:
             nn.init.constant_(self.sigma, 0)
         else:
             nn.init.orthogonal_(self.sigma.weight, gain=0.01)
@@ -156,7 +156,7 @@ class ActorCritic(nn.Module):
             x = self.value_mlp(z)
         value = self.value(x)
 
-        if self.actor_input_ind_std:
+        if self.fixed_sigma:
             sigma = self.sigma
         else:
             sigma = self.sigma(x)

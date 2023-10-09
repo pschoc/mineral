@@ -12,7 +12,7 @@ network:
   separate_value_mlp: True
   act_type: ELU
   norm_type: null
-  actor_input_ind_std: True
+  fixed_sigma: True
 
 ppo:
   name: ${resolve_default:Cartpole,${...experiment}}

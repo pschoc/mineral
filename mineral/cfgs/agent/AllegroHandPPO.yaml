@@ -24,7 +24,7 @@ network:
     dist: normal_dreamerv3
     minstd: 0.1
     maxstd: 1.0
-  actor_input_ind_std: False
+  fixed_sigma: False
 
 ppo:
   name: ${resolve_default:AllegroHand,${...experiment}}
