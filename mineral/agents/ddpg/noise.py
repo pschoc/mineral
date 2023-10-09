@@ -1,3 +1,5 @@
+from typing import List, Optional
+
 import torch
 from torch.distributions import Normal
 
@@ -16,9 +18,16 @@ class FixedNormalActionNoise:
         return sample
 
 
-def add_normal_noise(x, std, noise_bounds=None, out_bounds=None):
+# @torch.jit.script
+def add_normal_noise(
+    x,
+    std: float,
+    noise_bounds: Optional[List[float]] = None,
+    out_bounds: Optional[List[float]] = None,
+):
     noise = torch.normal(
-        torch.zeros(x.shape, dtype=x.dtype, device=x.device), torch.full(x.shape, std, dtype=x.dtype, device=x.device)
+        torch.zeros(x.shape, dtype=x.dtype, device=x.device),
+        torch.full(x.shape, std, dtype=x.dtype, device=x.device),
     )
     if noise_bounds is not None:
         noise = noise.clamp(noise_bounds[0], noise_bounds[1])
@@ -28,9 +37,15 @@ def add_normal_noise(x, std, noise_bounds=None, out_bounds=None):
     return out
 
 
-def add_mixed_normal_noise(x, std_max, std_min, noise_bounds=None, out_bounds=None):
+# @torch.jit.script
+def add_mixed_normal_noise(
+    x,
+    std_max: float,
+    std_min: float,
+    noise_bounds: Optional[List[float]] = None,
+    out_bounds: Optional[List[float]] = None,
+):
     std_seq = torch.linspace(std_min, std_max, x.shape[0]).to(x.device).unsqueeze(-1).expand(x.shape)
-
     noise = torch.normal(torch.zeros(x.shape, dtype=x.dtype, device=x.device), std_seq)
     if noise_bounds is not None:
         noise = noise.clamp(noise_bounds[0], noise_bounds[1])

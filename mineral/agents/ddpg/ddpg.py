@@ -1,5 +1,5 @@
+import re
 import time
-from collections import deque
 from copy import deepcopy
 from typing import Sequence
 
@@ -13,62 +13,23 @@ from ...buffers import NStepReplay, ReplayBuffer
 from ..actorcritic_base import ActorCriticBase
 from .noise import add_mixed_normal_noise, add_normal_noise
 from .schedule_util import ExponentialSchedule, LinearSchedule
-from .utils import RewardShaper
+from .utils import RewardShaper, RunningMeanStd
 
 
-def handle_timeout(dones, info):
-    timeout_key = 'TimeLimit.truncated'
-    timeout_envs = None
-    if timeout_key in info:
-        timeout_envs = info[timeout_key]
-    if timeout_envs is not None:
-        dones = dones * (~timeout_envs)
-    return dones
-
-
-class Tracker:
-    def __init__(self, max_len):
-        self.moving_average = deque([0 for _ in range(max_len)], maxlen=max_len)
-        self.max_len = max_len
-
-    def __repr__(self):
-        return self.moving_average.__repr__()
-
-    def update(self, value):
-        if isinstance(value, np.ndarray) or isinstance(value, torch.Tensor):
-            self.moving_average.extend(value.tolist())
-        elif isinstance(value, Sequence):
-            self.moving_average.extend(value)
-        else:
-            self.moving_average.append(value)
-
-    def mean(self):
-        return np.mean(self.moving_average)
-
-    def std(self):
-        return np.std(self.moving_average)
-
-    def max(self):
-        return np.max(self.moving_average)
-
-
-@torch.no_grad()
-def soft_update(target_net, current_net, tau: float):
-    for tar, cur in zip(target_net.parameters(), current_net.parameters()):
-        tar.data.copy_(cur.data * tau + tar.data * (1.0 - tau))
-
-
-def create_simple_mlp(in_dim, out_dim, hidden_layers, act=nn.ELU):
+def create_simple_mlp(in_dim, out_dim, hidden_layers, act_type="ELU", act_kwargs=dict(inplace=True)):
     layer_nums = [in_dim, *hidden_layers, out_dim]
     model = []
     for idx, (in_f, out_f) in enumerate(zip(layer_nums[:-1], layer_nums[1:])):
         model.append(nn.Linear(in_f, out_f))
         if idx < len(layer_nums) - 2:
-            model.append(act())
+            module = torch.nn.modules.activation
+            Cls = getattr(module, act_type)
+            act = Cls(**act_kwargs)
+            model.append(act)
     return nn.Sequential(*model)
 
 
-class MLPNet(nn.Module):
+class MLP(nn.Module):
     def __init__(self, in_dim, out_dim, hidden_layers=None):
         super().__init__()
         if isinstance(in_dim, Sequence):
@@ -81,7 +42,7 @@ class MLPNet(nn.Module):
         return self.net(x)
 
 
-class TanhMLPPolicy(MLPNet):
+class TanhMLPPolicy(MLP):
     def forward(self, state):
         return super().forward(state).tanh()
 
@@ -91,8 +52,8 @@ class DoubleQ(nn.Module):
         super().__init__()
         if isinstance(state_dim, Sequence):
             state_dim = state_dim[0]
-        self.net_q1 = MLPNet(in_dim=state_dim + act_dim, out_dim=1)
-        self.net_q2 = MLPNet(in_dim=state_dim + act_dim, out_dim=1)
+        self.net_q1 = MLP(in_dim=state_dim + act_dim, out_dim=1)
+        self.net_q2 = MLP(in_dim=state_dim + act_dim, out_dim=1)
 
     def get_q_min(self, state: Tensor, action: Tensor) -> Tensor:
         return torch.min(*self.get_q1_q2(state, action))  # min Q value
@@ -104,55 +65,6 @@ class DoubleQ(nn.Module):
     def get_q1(self, state: Tensor, action: Tensor) -> (Tensor, Tensor):
         input_x = torch.cat((state, action), dim=1)
         return self.net_q1(input_x)
-
-
-class RunningMeanStd:
-    # https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
-    def __init__(self, epsilon=1e-4, shape=(), device='cuda'):
-        self.device = device
-        self.mean = torch.zeros(shape, device=self.device)
-        self.var = torch.ones(shape, device=self.device)
-        self.epsilon = epsilon
-        self.count = epsilon
-
-    def update(self, x):
-        batch_mean = x.mean(dim=0)
-        batch_var = x.var(dim=0)
-        batch_count = x.shape[0]
-        self.update_from_moments(batch_mean, batch_var, batch_count)
-
-    def normalize(self, x):
-        out = (x - self.mean) / torch.sqrt(self.var + self.epsilon)
-        return out
-
-    def unnormalize(self, x):
-        out = x * torch.sqrt(self.var + self.epsilon) + self.mean
-        return out
-
-    def update_from_moments(self, batch_mean, batch_var, batch_count):
-        delta = batch_mean - self.mean
-        tot_count = self.count + batch_count
-
-        new_mean = self.mean + delta * batch_count / tot_count
-        m_a = self.var * self.count
-        m_b = batch_var * batch_count
-        m_2 = m_a + m_b + delta**2 * self.count * batch_count / tot_count
-        new_var = m_2 / tot_count
-
-        self.mean = new_mean
-        self.var = new_var
-        self.count = tot_count
-
-    def get_states(self, device=None):
-        if device is not None:
-            return self.mean.to(device), self.var.to(device), self.epsilon
-        else:
-            return self.mean, self.var, self.epsilon
-
-    def load_state_dict(self, info):
-        self.mean = info[0]
-        self.var = info[1]
-        self.count = info[2]
 
 
 class DDPG(ActorCriticBase):
@@ -167,6 +79,9 @@ class DDPG(ActorCriticBase):
         self.actor = TanhMLPPolicy(obs_dim, self.action_dim)
         self.critic = DoubleQ(obs_dim, self.action_dim).to(self.device)
 
+        print(self.actor)
+        print(self.critic, '\n')
+
         self.actor.to(self.device)
         self.critic.to(self.device)
 
@@ -176,8 +91,12 @@ class DDPG(ActorCriticBase):
         self.critic_target = deepcopy(self.critic)
         self.actor_target = deepcopy(self.actor) if not self.ddpg_config.no_tgt_actor else self.actor
 
-        if self.ddpg_config.obs_norm:
-            self.obs_rms = RunningMeanStd(shape=obs_dim, device=self.device)
+        if self.normalize_input:
+            self.obs_rms = {
+                k: RunningMeanStd(v, device=self.device) if re.match(self.input_keys_normalize, k) else nn.Identity()
+                for k, v in self.obs_space.items()
+            }
+            self.obs_rms = nn.ModuleDict(self.obs_rms).to(self.device)
         else:
             self.obs_rms = None
 
@@ -197,20 +116,13 @@ class DDPG(ActorCriticBase):
             self.noise_scheduler = None
 
         self.memory = ReplayBuffer(
-            obs_dim,
-            self.action_dim,
-            capacity=int(self.ddpg_config.memory_size),
-            device=self.device,
+            self.obs_space, self.action_dim, capacity=int(self.ddpg_config.memory_size), device=self.device
+        )
+        self.n_step_buffer = NStepReplay(
+            self.obs_space, self.action_dim, self.num_actors, self.ddpg_config.nstep, device=self.device
         )
 
-        self.n_step_buffer = NStepReplay(obs_dim, self.action_dim, self.num_actors, self.ddpg_config.nstep, device=self.device)
-
         self.reward_shaper = RewardShaper(**self.ddpg_config['reward_shaper'])
-
-        self.return_tracker = Tracker(100)
-        self.current_returns = torch.zeros(self.num_actors, dtype=torch.float32, device=self.device)
-        self.current_lengths = torch.zeros(self.num_actors, dtype=torch.float32, device=self.device)
-        self.step_tracker = Tracker(100)
 
         self.epoch_num = -1
         self.global_steps = 0
@@ -227,8 +139,9 @@ class DDPG(ActorCriticBase):
             self.noise_scheduler.step()
 
     def get_actions(self, obs, sample=True):
-        if self.ddpg_config.obs_norm:
-            obs = self.obs_rms.normalize(obs)
+        if self.normalize_input:
+            obs = {k: self.obs_rms[k].normalize(v) for k, v in obs.items()}
+        obs = obs['obs']
         actions = self.actor(obs)
         if sample:
             if self.ddpg_config.noise.type == 'fixed':
@@ -258,40 +171,49 @@ class DDPG(ActorCriticBase):
 
     @torch.no_grad()
     def explore_env(self, env, timesteps: int, random: bool = False) -> list:
-        obs_dim = (self.obs_dim,) if isinstance(self.obs_dim, int) else self.obs_dim
-        traj_states = torch.empty((self.num_actors, timesteps) + (*obs_dim,), device=self.device)
+        traj_obs = {
+            k: torch.empty((self.num_actors, timesteps) + v, dtype=torch.float32, device=self.device)
+            for k, v in self.obs_space.items()
+        }
         traj_actions = torch.empty((self.num_actors, timesteps) + (self.action_dim,), device=self.device)
         traj_rewards = torch.empty((self.num_actors, timesteps), device=self.device)
-        traj_next_states = torch.empty((self.num_actors, timesteps) + (*obs_dim,), device=self.device)
+        traj_next_obs = {
+            k: torch.empty((self.num_actors, timesteps) + v, dtype=torch.float32, device=self.device)
+            for k, v in self.obs_space.items()
+        }
         traj_dones = torch.empty((self.num_actors, timesteps), device=self.device)
 
         obs = self.obs
         for i in range(timesteps):
-            if self.ddpg_config.obs_norm:
-                self.obs_rms.update(obs)
+            if self.normalize_input:
+                for k, v in obs.items():
+                    self.obs_rms[k].update(v)
             if random:
                 action = torch.rand((self.num_actors, self.action_dim), device=self.device) * 2.0 - 1.0
             else:
                 action = self.get_actions(obs, sample=True)
 
             next_obs, reward, done, info = env.step(action)
-            next_obs = next_obs['obs']
-            self.update_tracker(reward, done, info)
+            next_obs = self._convert_obs(next_obs)
+
+            done_indices = torch.where(done)[0].tolist()
+            self.update_tracker(reward, done_indices, info)
             if self.ddpg_config.handle_timeout:
                 done = handle_timeout(done, info)
 
-            traj_states[:, i] = obs
+            for k, v in obs.items():
+                traj_obs[k][:, i] = v
             traj_actions[:, i] = action
             traj_dones[:, i] = done
             traj_rewards[:, i] = reward
-            traj_next_states[:, i] = next_obs
+            for k, v in next_obs.items():
+                traj_next_obs[k][:, i] = v.clone()
             obs = next_obs
         self.obs = obs
 
-        reward_scale = 1.0
-        traj_rewards = reward_scale * traj_rewards.reshape(self.num_actors, timesteps, 1)
+        traj_rewards = self.reward_shaper(traj_rewards.reshape(self.num_actors, timesteps, 1))
         traj_dones = traj_dones.reshape(self.num_actors, timesteps, 1)
-        data = self.n_step_buffer.add_to_buffer(traj_states, traj_actions, traj_rewards, traj_next_states, traj_dones)
+        data = self.n_step_buffer.add_to_buffer(traj_obs, traj_actions, traj_rewards, traj_next_obs, traj_dones)
 
         return data, timesteps * self.num_actors
 
@@ -300,9 +222,10 @@ class DDPG(ActorCriticBase):
         actor_loss_list = list()
         for i in range(self.ddpg_config.mini_epochs):
             obs, action, reward, next_obs, done = memory.sample_batch(self.ddpg_config.batch_size)
-            if self.ddpg_config.obs_norm:
-                obs = self.obs_rms.normalize(obs)
-                next_obs = self.obs_rms.normalize(next_obs)
+            if self.normalize_input:
+                obs = {k: self.obs_rms[k].normalize(v) for k, v in obs.items()}
+                next_obs = {k: self.obs_rms[k].normalize(v) for k, v in next_obs.items()}
+            obs, next_obs = obs['obs'], next_obs['obs']
             critic_loss, critic_grad_norm = self.update_critic(obs, action, reward, next_obs, done)
             critic_loss_list.append(critic_loss)
 
@@ -316,8 +239,8 @@ class DDPG(ActorCriticBase):
         log_info = {
             "train/critic_loss": np.mean(critic_loss_list),
             "train/actor_loss": np.mean(actor_loss_list),
-            "metrics/episode_rewards": self.return_tracker.mean(),
-            "metrics/episode_lengths": self.step_tracker.mean(),
+            "metrics/episode_rewards": self.episode_rewards.mean(),
+            "metrics/episode_lengths": self.episode_lengths.mean(),
         }
         # self.add_info_tracker_log(log_info)
         return log_info
@@ -347,10 +270,8 @@ class DDPG(ActorCriticBase):
         _t = time.perf_counter()
         _last_t = _t
 
-        self.obs = self.env.reset()
-        self.obs = self.obs['obs']
-        # if not isinstance(self.obs, dict):
-        #     self.obs = {'obs': self.obs}
+        obs = self.env.reset()
+        self.obs = self._convert_obs(obs)
         self.dones = torch.ones((self.num_actors,), dtype=torch.bool, device=self.device)
 
         self.set_eval()
@@ -388,7 +309,7 @@ class DDPG(ActorCriticBase):
         self.actor_target.eval()
         self.critic_target.eval()
 
-        self.running_mean_std.eval()
+        self.obs_rms.eval()
 
     def set_train(self):
         self.actor.train()
@@ -396,33 +317,24 @@ class DDPG(ActorCriticBase):
         self.actor_target.train()
         self.critic_target.train()
 
-        self.running_mean_std.eval()
+        self.obs_rms.eval()
 
     def restore_train(self, f):
         if not f:
             return
-        checkpoint = torch.load(f)
-        self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
 
-    def update_tracker(self, reward, done, info):
-        self.current_returns += reward
-        self.current_lengths += 1
-        env_done_indices = torch.where(done)[0]
-        self.return_tracker.update(self.current_returns[env_done_indices])
-        self.step_tracker.update(self.current_lengths[env_done_indices])
-        self.current_returns[env_done_indices] = 0
-        self.current_lengths[env_done_indices] = 0
-        # if self.cfg.info_track_keys is not None:
-        #     env_done_indices = env_done_indices.cpu()
-        #     for key in self.cfg.info_track_keys:
-        #         if key not in info:
-        #             continue
-        #         if self.info_track_step[key] == 'last':
-        #             info_val = info[key]
-        #             self.info_trackers[key].update(info_val[env_done_indices].cpu())
-        #         elif self.info_track_step[key] == 'all-episode':
-        #             self.traj_info_values[key] += info[key].cpu()
-        #             self.info_trackers[key].update(self.traj_info_values[key][env_done_indices])
-        #             self.traj_info_values[key][env_done_indices] = 0
-        #         elif self.info_track_step[key] == 'all-step':
-        #             self.info_trackers[key].update(info[key].cpu())
+
+@torch.no_grad()
+def soft_update(target_net, current_net, tau: float):
+    for tar, cur in zip(target_net.parameters(), current_net.parameters()):
+        tar.data.copy_(cur.data * tau + tar.data * (1.0 - tau))
+
+
+def handle_timeout(dones, info):
+    timeout_key = 'TimeLimit.truncated'
+    timeout_envs = None
+    if timeout_key in info:
+        timeout_envs = info[timeout_key]
+    if timeout_envs is not None:
+        dones = dones * (~timeout_envs)
+    return dones
