@@ -4,12 +4,10 @@ import re
 
 import numpy as np
 import torch
-import torch.nn as nn
 from omegaconf import OmegaConf
 
 from ..common.tracker import Tracker
 from ..common.writer import TensorboardWriter, WandbWriter
-from .nets import RunningMeanStd
 
 
 class ActorCriticBase:
@@ -35,13 +33,6 @@ class ActorCriticBase:
             obs_space = {k: v.shape for k, v in self.observation_space.spaces.items()}
         except:
             obs_space = {'obs': self.observation_space.shape}
-        if self.normalize_input:
-            self.running_mean_std = {
-                k: RunningMeanStd(v).to(self.device) if re.match(self.input_keys_normalize, k) else nn.Identity()
-                for k, v in obs_space.items()
-            }
-            self.running_mean_std = nn.ModuleDict(self.running_mean_std)
-            print('RunningMeanStd:', self.running_mean_std)
         self.obs_space = obs_space
 
         # ---- Logging ----

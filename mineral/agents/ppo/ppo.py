@@ -9,10 +9,9 @@ import torch.distributed as dist
 import torch.nn as nn
 
 from ..actorcritic_base import ActorCriticBase
-from ..nets import RunningMeanStd
 from . import models
 from .experience import ExperienceBuffer
-from .utils import AdaptiveScheduler, LinearScheduler, RewardShaper, adjust_learning_rate_cos
+from .utils import AdaptiveScheduler, LinearScheduler, RewardShaper, RunningMeanStd, adjust_learning_rate_cos
 
 
 class PPO(ActorCriticBase):
@@ -30,6 +29,14 @@ class PPO(ActorCriticBase):
             dist.init_process_group('nccl', rank=self.rank, world_size=self.rank_size)
             self.device = 'cuda:' + str(self.rank)
             print(f'current rank: {self.rank} and use device {self.device}')
+        # ---- Normalizer ----
+        if self.normalize_input:
+            self.running_mean_std = {
+                k: RunningMeanStd(v) if re.match(self.input_keys_normalize, k) else nn.Identity()
+                for k, v in self.obs_space.items()
+            }
+            self.running_mean_std = nn.ModuleDict(self.running_mean_std).to(self.device)
+            print('RunningMeanStd:', self.running_mean_std)
         # ---- Model ----
         ModelCls = getattr(models, self.network_config.get('model_cls', 'ActorCritic'))
         self.model = ModelCls(self.obs_space, self.action_dim, self.network_config)
