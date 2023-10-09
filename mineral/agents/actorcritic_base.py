@@ -109,6 +109,20 @@ class ActorCriticBase:
         summary = tuple([(step, k, v) for k, v in metrics.items()])
         [w(summary) for w in self._writers]
 
+    def _convert_obs(self, obs):
+        if not isinstance(obs, dict):
+            obs = {'obs': obs}
+
+        # Copy obs dict since env.step may modify it (ie. IsaacGymEnvs)
+        _obs = {}
+        for k, v in obs.items():
+            if isinstance(v, np.ndarray):
+                _obs[k] = torch.tensor(v, device=self.device if not re.match(self.obs_keys_cpu, k) else 'cpu')
+            else:
+                # assert isinstance(v, torch.Tensor)
+                _obs[k] = v
+        return _obs
+
     @staticmethod
     def _reshape_env_render(k, v):
         if len(v.shape) == 3:  # H, W, C
@@ -121,7 +135,7 @@ class ActorCriticBase:
             raise RuntimeError(f'Unsupported {k} shape {v.shape}')
         return v
 
-    def _update_tracker(self, rewards, done_indices, infos, save_video=False):
+    def update_tracker(self, rewards, done_indices, infos, save_video=False):
         self.current_rewards += rewards
         self.current_lengths += 1
         self.episode_rewards.update(self.current_rewards[done_indices])

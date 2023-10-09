@@ -123,9 +123,8 @@ class PPO(ActorCriticBase):
     def train(self):
         _t = time.time()
         _last_t = time.time()
-        self.obs = self.env.reset()
-        if not isinstance(self.obs, dict):
-            self.obs = {'obs': self.obs}
+        obs = self.env.reset()
+        self.obs = self._convert_obs(obs)
         self.dones = torch.ones((self.num_actors,), dtype=torch.bool, device=self.device)
         self.agent_steps = self.batch_size if not self.multi_gpu else self.batch_size * self.rank_size
 
@@ -242,7 +241,7 @@ class PPO(ActorCriticBase):
                             offset += param.numel()
 
                 if self.truncate_grads:
-                    grad_norm_all = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+                    grad_norm_all = nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
                 self.optimizer.step()
 
                 with torch.no_grad():
@@ -327,27 +326,15 @@ class PPO(ActorCriticBase):
             obs_dict, r, done, info = self.env.step(mu)
             info['reward'] = r
 
-    def _convert_obs(self):
-        obs = {}
-        for k, v in self.obs.items():
-            if isinstance(v, np.ndarray):
-                obs[k] = torch.tensor(v, device=self.device if not re.match(self.obs_keys_cpu, k) else 'cpu')
-            else:
-                # assert isinstance(v, torch.Tensor)
-                obs[k] = v
-        return obs
-
     def play_steps(self):
         for n in range(self.horizon_length):
             if self.call_env_reset:
                 if any(self.dones):
-                    done_indices = self.dones.nonzero(as_tuple=False)
-                    done_indices = done_indices.squeeze(-1).cpu().numpy().tolist()
+                    done_indices = torch.where(self.dones)[0].tolist()
                     obs_reset = self.env.reset_idx(done_indices)
                     for k, v in obs_reset.items():
                         self.obs[k][done_indices] = v
 
-            self.obs = self._convert_obs()
             res_dict = self.model_act(self.obs)
             # collect o_t
             self.storage.update_data('obses', n, self.obs)
@@ -355,7 +342,8 @@ class PPO(ActorCriticBase):
                 self.storage.update_data(k, n, res_dict[k])
             # do env step
             actions = torch.clamp(res_dict['actions'], -1.0, 1.0)
-            self.obs, r, self.dones, infos = self.env.step(actions)
+            obs, r, self.dones, infos = self.env.step(actions)
+            self.obs = self._convert_obs(obs)
             r, self.dones = torch.tensor(r, device=self.device), torch.tensor(self.dones, device=self.device)
             rewards = r.reshape(-1, 1)
 
@@ -368,10 +356,9 @@ class PPO(ActorCriticBase):
                 shaped_rewards += self.gamma * res_dict['values'] * time_outs.float()
             self.storage.update_data('rewards', n, shaped_rewards)
 
-            done_indices = self.dones.nonzero(as_tuple=False)
-            done_indices = done_indices.squeeze(-1).cpu().numpy().tolist()
+            done_indices = torch.where(self.dones)[0].tolist()
             save_video = (self.save_video_every) > 0 and (self.epoch_num % self.save_video_every < self.save_video_consecutive)
-            self._update_tracker(rewards.squeeze(-1), done_indices, infos, save_video=save_video)
+            self.update_tracker(rewards.squeeze(-1), done_indices, infos, save_video=save_video)
 
         if self.save_video_every > 0:
             # saved video steps depends on horizon_length in play_steps()
@@ -379,7 +366,6 @@ class PPO(ActorCriticBase):
                 self._info_video = {f'video/{k}': np.concatenate(v, 1) for k, v in self._video_buf.items()}
                 self._video_buf = collections.defaultdict(list)
 
-        obs = self._convert_obs()
         res_dict = self.model_act(obs)
         last_values = res_dict['values']
 
