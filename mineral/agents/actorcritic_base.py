@@ -25,9 +25,9 @@ class ActorCriticBase:
         self.env_autoreset = full_cfg.task.get('env_autoreset', True)  # set to False to explicitly call env.reset
 
         # ---- Inputs ----
-        self.obs_keys_cpu = full_cfg.agent.get('obs_keys_cpu', '$^')
+        self.obs_keys_cpu = re.compile(full_cfg.agent.get('obs_keys_cpu', '$^'))
+        self.input_keys_normalize = re.compile(full_cfg.agent.get('input_keys_normalize', ''))
         self.normalize_input = full_cfg.agent.get('normalize_input', False)
-        self.input_keys_normalize = full_cfg.agent.get('input_keys_normalize', '')
         self.observation_space = self.env.observation_space
         try:
             obs_space = {k: v.shape for k, v in self.observation_space.spaces.items()}
@@ -57,12 +57,12 @@ class ActorCriticBase:
         # ---- Logging ----
         self.env_render = full_cfg.env_render
         info_keys_cfg = full_cfg.agent.get('info_keys', {})
-        self.info_keys_video = info_keys_cfg.get('video', '$^')
-        self.info_keys_sum = info_keys_cfg.get('sum', '$^')
-        self.info_keys_min = info_keys_cfg.get('min', '$^')
-        self.info_keys_max = info_keys_cfg.get('max', '$^')
-        self.info_keys_final = info_keys_cfg.get('final', '$^')
-        self.info_keys_scalar = info_keys_cfg.get('scalar', '$^')
+        self.info_keys_video = re.compile(info_keys_cfg.get('video', '$^'))
+        self.info_keys_sum = re.compile(info_keys_cfg.get('sum', '$^'))
+        self.info_keys_min = re.compile(info_keys_cfg.get('min', '$^'))
+        self.info_keys_max = re.compile(info_keys_cfg.get('max', '$^'))
+        self.info_keys_final = re.compile(info_keys_cfg.get('final', '$^'))
+        self.info_keys_scalar = re.compile(info_keys_cfg.get('scalar', '$^'))
         self.save_video_every = full_cfg.agent.get('save_video_every', 0)
         self.save_video_consecutive = full_cfg.agent.get('save_video_consecutive', 0)
 
