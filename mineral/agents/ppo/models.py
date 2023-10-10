@@ -61,7 +61,7 @@ class ActorCritic(nn.Module):
         self.mu = nn.Linear(out_size, action_dim)
 
         if self.fixed_sigma:
-            self.sigma = nn.Parameter(torch.zeros(action_dim, requires_grad=True, dtype=torch.float32), requires_grad=True)
+            self.sigma = nn.Parameter(torch.zeros(action_dim, dtype=torch.float32), requires_grad=True)
         else:
             self.sigma = nn.Linear(out_size, action_dim)
 

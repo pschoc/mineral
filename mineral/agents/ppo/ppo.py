@@ -357,7 +357,7 @@ class PPO(ActorCriticBase):
             self.storage.update_data('rewards', n, shaped_rewards)
 
             done_indices = torch.where(self.dones)[0].tolist()
-            save_video = (self.save_video_every) > 0 and (self.epoch_num % self.save_video_every < self.save_video_consecutive)
+            save_video = (self.save_video_every > 0) and (self.epoch_num % self.save_video_every < self.save_video_consecutive)
             self.update_tracker(rewards.squeeze(-1), done_indices, infos, save_video=save_video)
 
         if self.save_video_every > 0:

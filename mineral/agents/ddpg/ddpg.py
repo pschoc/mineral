@@ -76,8 +76,8 @@ class DDPG(ActorCriticBase):
 
         self.reward_shaper = RewardShaper(**self.ddpg_config['reward_shaper'])
 
-        self.epoch_num = -1
-        self.global_steps = 0
+        self.epoch = -1
+        self.agent_steps = 0
         self.max_agent_steps = int(self.ddpg_config['max_agent_steps'])
 
     def get_noise_std(self):
@@ -157,7 +157,7 @@ class DDPG(ActorCriticBase):
             next_obs = self._convert_obs(next_obs)
 
             done_indices = torch.where(dones)[0].tolist()
-            save_video = (self.save_video_every) > 0 and (self.epoch_num % self.save_video_every < self.save_video_consecutive)
+            save_video = (self.save_video_every > 0) and (self.epoch % self.save_video_every < self.save_video_consecutive)
             self.update_tracker(rewards, done_indices, infos, save_video=save_video)
             if self.ddpg_config.handle_timeout:
                 dones = handle_timeout(dones, infos)
@@ -173,7 +173,7 @@ class DDPG(ActorCriticBase):
         self.obs = obs
 
         if self.save_video_every > 0:
-            if (self.epoch_num % self.save_video_every) == (self.save_video_consecutive - 1):
+            if (self.epoch % self.save_video_every) == (self.save_video_consecutive - 1):
                 self._info_video = {f'video/{k}': np.concatenate(v, 1) for k, v in self._video_buf.items()}
                 self._video_buf = collections.defaultdict(list)
 
@@ -256,18 +256,18 @@ class DDPG(ActorCriticBase):
         self.set_eval()
         trajectory, steps = self.explore_env(self.env, self.ddpg_config.warm_up, random=True)
         self.memory.add_to_buffer(trajectory)
-        self.global_steps += steps
+        self.agent_steps += steps
 
-        while self.global_steps < self.max_agent_steps:
-            self.epoch_num += 1
+        while self.agent_steps < self.max_agent_steps:
+            self.epoch += 1
             self.set_eval()
             trajectory, steps = self.explore_env(self.env, self.ddpg_config.horizon_len, random=False)
-            self.global_steps += steps
+            self.agent_steps += steps
             self.memory.add_to_buffer(trajectory)
 
             self.set_train()
             metrics = self.update_net(self.memory)
-            self.write_metrics(self.global_steps, metrics)
+            self.write_metrics(self.agent_steps, metrics)
 
     def optimizer_update(self, optimizer, objective):
         optimizer.zero_grad(set_to_none=True)
