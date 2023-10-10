@@ -1,10 +1,8 @@
 import numpy as np
 import torch
-import torch.distributions as D
 import torch.nn as nn
-import torch.nn.functional as F
 
-from ..nets import MultiEncoder
+from ..nets import Dist, MultiEncoder
 
 
 class MLP(nn.Module):
@@ -161,33 +159,3 @@ class ActorCritic(nn.Module):
         else:
             sigma = self.sigma(x)
         return mu, mu * 0 + sigma, value
-
-
-class Dist(nn.Module):
-    def __init__(
-        self,
-        dist='normal',
-        minstd=1.0,
-        maxstd=1.0,
-    ):
-        super().__init__()
-        self._dist = dist
-        self._minstd = minstd
-        self._maxstd = maxstd
-
-    def forward(self, mu, logstd):
-        if self._dist == 'normal':
-            sigma = torch.exp(logstd)
-            distr = D.Normal(mu, sigma)
-        elif self._dist == 'normal_dreamerv3':
-            lo, hi = self._minstd, self._maxstd
-            std = (hi - lo) * torch.sigmoid(logstd + 2.0) + lo
-            mu = torch.tanh(mu)
-            distr = D.Normal(mu, std)
-            sigma = std
-        else:
-            raise NotImplementedError
-        return mu, sigma, distr
-
-    def __repr__(self):
-        return f'Dist(dist={self._dist})'
