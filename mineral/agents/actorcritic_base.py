@@ -80,8 +80,9 @@ class ActorCriticBase:
         self.current_rewards = torch.zeros(self.num_actors, dtype=torch.float32, device=self.device)
         self.current_lengths = torch.zeros(self.num_actors, dtype=torch.float32, device=self.device)
 
-        self.episode_rewards = Tracker(100)
-        self.episode_lengths = Tracker(100)
+        tracker_len = full_cfg.agent.get('tracker_len', 100)
+        self.episode_rewards = Tracker(tracker_len)
+        self.episode_lengths = Tracker(tracker_len)
 
         # ---- Wandb / Tensorboard Logger ----
         self._info_extra = {}
