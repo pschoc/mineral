@@ -4,24 +4,42 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from ..nets import Dist
+
 
 class MLP(nn.Module):
-    def __init__(self, in_dim, out_dim=None, units=[512, 256, 128], act_type="ELU", norm_type=None):
+    def __init__(
+        self,
+        in_dim,
+        out_dim=None,
+        units=[512, 256, 128],
+        act_type="ELU",
+        act_kwargs=dict(inplace=True),
+        norm_type=None,
+        norm_kwargs={},
+        plain_last=False,
+    ):
         super().__init__()
-        units = units = [out_dim] if out_dim is not None else units
+        if out_dim is not None:
+            units = [*units, out_dim]
         layers = []
-        for output_size in units:
+        for i, output_size in enumerate(units):
             layers.append(nn.Linear(in_dim, output_size))
+            if plain_last and i == len(units) - 1:
+                break
             if norm_type is not None:
                 module = torch.nn
                 Cls = getattr(module, norm_type)
-                layers.append(Cls(output_size))
+                norm = Cls(output_size, **norm_kwargs)
+                layers.append(norm)
             if act_type is not None:
                 module = torch.nn.modules.activation
                 Cls = getattr(module, act_type)
-                layers.append(Cls())
+                act = Cls(**act_kwargs)
+                layers.append(act)
             in_dim = output_size
         self.mlp = nn.Sequential(*layers)
+        self.out_dim = units[-1]
 
     def forward(self, x):
         return self.mlp(x)
@@ -53,9 +71,51 @@ class MLPNet(nn.Module):
         return self.net(x)
 
 
-class TanhMLPPolicy(MLPNet):
-    def forward(self, state):
-        return super().forward(state).tanh()
+class Actor(nn.Module):
+    def __init__(
+        self,
+        state_dim,
+        action_dim,
+        tanh_policy=True,
+        fixed_sigma=None,
+        mlp_kwargs={},
+        dist_kwargs={},
+    ):
+        super().__init__()
+        self.tanh_policy = tanh_policy
+        self.fixed_sigma = fixed_sigma
+
+        self.actor_mlp = MLP(state_dim, None, **mlp_kwargs)
+        self.mu = nn.Linear(self.actor_mlp.out_dim, action_dim)
+        if self.tanh_policy:
+            pass
+        else:
+            if self.fixed_sigma is None:
+                pass
+            elif self.fixed_sigma:
+                self.sigma = nn.Parameter(torch.zeros(action_dim, dtype=torch.float32), requires_grad=True)
+            else:
+                self.sigma = nn.Linear(self.actor_mlp.out_dim, action_dim)
+            self.dist = Dist(**dist_kwargs)
+
+    def forward(self, x, std=None):
+        x = self.actor_mlp(x)
+        mu = self.mu(x)
+        if self.tanh_policy:
+            mu = mu.tanh()
+            sigma, dist = None, None
+        else:
+            if self.fixed_sigma is None:
+                assert std is not None
+                sigma = std
+            elif self.fixed_sigma:
+                sigma = self.sigma
+            else:
+                sigma = self.sigma(x)
+
+            dist = None
+            raise NotImplementedError
+        return mu, sigma, dist
 
 
 class DoubleQ(nn.Module):

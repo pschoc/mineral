@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
 
 from ...buffers import NStepReplay, ReplayBuffer
 from ..actorcritic_base import ActorCriticBase
@@ -24,12 +23,11 @@ class DDPG(ActorCriticBase):
         self.num_actors = self.ddpg_config.num_actors
         super().__init__(env, output_dir, full_cfg)
 
-        obs_dim = self.obs_space['obs']
-        self.obs_dim = obs_dim
-
         ActorCls = getattr(models, self.network_config.actor)
         CriticCls = getattr(models, self.network_config.critic)
 
+        obs_dim = self.obs_space['obs']
+        obs_dim = obs_dim[0] if isinstance(obs_dim, tuple) else obs_dim
         self.actor = ActorCls(obs_dim, self.action_dim, **self.network_config.get("actor_kwargs", {}))
         self.critic = CriticCls(obs_dim, self.action_dim, **self.network_config.get("critic_kwargs", {}))
 
@@ -96,7 +94,11 @@ class DDPG(ActorCriticBase):
         if self.normalize_input:
             obs = {k: self.obs_rms[k].normalize(v) for k, v in obs.items()}
         obs = obs['obs']
-        actions = self.actor(obs)
+        mu, sigma, dist = self.actor(obs)
+        if dist is None:
+            actions = mu
+        else:
+            raise NotImplementedError
         if sample:
             if self.ddpg_config.noise.type == 'fixed':
                 actions = add_normal_noise(actions, std=self.get_noise_std(), out_bounds=[-1.0, 1.0])
@@ -113,7 +115,11 @@ class DDPG(ActorCriticBase):
 
     @torch.no_grad()
     def get_tgt_policy_actions(self, obs, sample=True):
-        actions = self.actor_target(obs)
+        mu, sigma, dist = self.actor_target(obs)
+        if dist is None:
+            actions = mu
+        else:
+            raise NotImplementedError
         if sample:
             actions = add_normal_noise(
                 actions,
@@ -229,7 +235,11 @@ class DDPG(ActorCriticBase):
 
     def update_actor(self, obs):
         self.critic.requires_grad_(False)
-        action = self.actor(obs)
+        mu, sigma, dist = self.actor(obs)
+        if dist is None:
+            action = mu
+        else:
+            raise NotImplementedError
         Q = self.critic.get_q_min(obs, action)
         actor_loss = -Q.mean()
         grad_norm = self.optimizer_update(self.actor_optimizer, actor_loss)
@@ -300,7 +310,7 @@ def soft_update(target_net, current_net, tau: float):
         tar.data.copy_(cur.data * tau + tar.data * (1.0 - tau))
 
 
-def handle_timeout(dones, info, timeout_keys=('time_outs', 'TimeLimit.truncated',)):
+def handle_timeout(dones, info, timeout_keys=('time_outs', 'TimeLimit.truncated')):
     timeout_envs = None
     for timeout_key in timeout_keys:
         if timeout_key in info:
