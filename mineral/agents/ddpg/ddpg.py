@@ -2,7 +2,6 @@ import collections
 import re
 import time
 from copy import deepcopy
-from typing import Sequence
 
 import numpy as np
 import torch
@@ -12,60 +11,10 @@ from torch import Tensor
 
 from ...buffers import NStepReplay, ReplayBuffer
 from ..actorcritic_base import ActorCriticBase
+from . import models
 from .noise import add_mixed_normal_noise, add_normal_noise
 from .schedule_util import ExponentialSchedule, LinearSchedule
 from .utils import RewardShaper, RunningMeanStd
-
-
-def create_simple_mlp(in_dim, out_dim, hidden_layers, act_type="ELU", act_kwargs=dict(inplace=True)):
-    layer_nums = [in_dim, *hidden_layers, out_dim]
-    model = []
-    for idx, (in_f, out_f) in enumerate(zip(layer_nums[:-1], layer_nums[1:])):
-        model.append(nn.Linear(in_f, out_f))
-        if idx < len(layer_nums) - 2:
-            module = torch.nn.modules.activation
-            Cls = getattr(module, act_type)
-            act = Cls(**act_kwargs)
-            model.append(act)
-    return nn.Sequential(*model)
-
-
-class MLP(nn.Module):
-    def __init__(self, in_dim, out_dim, hidden_layers=None):
-        super().__init__()
-        if isinstance(in_dim, Sequence):
-            in_dim = in_dim[0]
-        if hidden_layers is None:
-            hidden_layers = [512, 256, 128]
-        self.net = create_simple_mlp(in_dim=in_dim, out_dim=out_dim, hidden_layers=hidden_layers)
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class TanhMLPPolicy(MLP):
-    def forward(self, state):
-        return super().forward(state).tanh()
-
-
-class DoubleQ(nn.Module):
-    def __init__(self, state_dim, act_dim):
-        super().__init__()
-        if isinstance(state_dim, Sequence):
-            state_dim = state_dim[0]
-        self.net_q1 = MLP(in_dim=state_dim + act_dim, out_dim=1)
-        self.net_q2 = MLP(in_dim=state_dim + act_dim, out_dim=1)
-
-    def get_q_min(self, state: Tensor, action: Tensor) -> Tensor:
-        return torch.min(*self.get_q1_q2(state, action))  # min Q value
-
-    def get_q1_q2(self, state: Tensor, action: Tensor) -> (Tensor, Tensor):
-        input_x = torch.cat((state, action), dim=1)
-        return self.net_q1(input_x), self.net_q2(input_x)  # two Q values
-
-    def get_q1(self, state: Tensor, action: Tensor) -> (Tensor, Tensor):
-        input_x = torch.cat((state, action), dim=1)
-        return self.net_q1(input_x)
 
 
 class DDPG(ActorCriticBase):
@@ -77,8 +26,12 @@ class DDPG(ActorCriticBase):
 
         obs_dim = self.obs_space['obs']
         self.obs_dim = obs_dim
-        self.actor = TanhMLPPolicy(obs_dim, self.action_dim)
-        self.critic = DoubleQ(obs_dim, self.action_dim).to(self.device)
+
+        ActorCls = getattr(models, self.network_config.actor)
+        CriticCls = getattr(models, self.network_config.critic)
+
+        self.actor = ActorCls(obs_dim, self.action_dim, **self.network_config.get("actor_kwargs", {}))
+        self.critic = CriticCls(obs_dim, self.action_dim, **self.network_config.get("critic_kwargs", {}))
 
         print(self.actor)
         print(self.critic, '\n')
