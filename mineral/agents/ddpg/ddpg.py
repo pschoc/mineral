@@ -77,6 +77,7 @@ class DDPG(ActorCriticBase):
         self.reward_shaper = RewardShaper(**self.ddpg_config['reward_shaper'])
 
         self.epoch = -1
+        self.mini_epoch = -1
         self.agent_steps = 0
         self.max_agent_steps = int(self.ddpg_config['max_agent_steps'])
 
@@ -87,6 +88,7 @@ class DDPG(ActorCriticBase):
             return self.noise_scheduler.val()
 
     def update_noise(self):
+        # TODO
         if self.noise_scheduler is not None:
             self.noise_scheduler.step()
 
@@ -121,6 +123,7 @@ class DDPG(ActorCriticBase):
         else:
             raise NotImplementedError
         if sample:
+            # target policy smoothing (TD3)
             actions = add_normal_noise(
                 actions,
                 std=self.ddpg_config.noise.tgt_pol_std,
@@ -186,6 +189,7 @@ class DDPG(ActorCriticBase):
     def update_net(self, memory):
         train_result = collections.defaultdict(list)
         for i in range(self.ddpg_config.mini_epochs):
+            self.mini_epoch += 1
             obs, action, reward, next_obs, done = memory.sample_batch(self.ddpg_config.batch_size)
 
             if self.normalize_input:
@@ -197,13 +201,15 @@ class DDPG(ActorCriticBase):
             train_result["critic_loss"].append(critic_loss)
             train_result["critic_grad_norm"].append(critic_grad_norm)
 
-            actor_loss, actor_grad_norm = self.update_actor(obs)
-            train_result["actor_loss"].append(actor_loss)
-            train_result["actor_grad_norm"].append(actor_grad_norm)
+            if self.mini_epoch % self.ddpg_config.update_actor_interval == 0:
+                actor_loss, actor_grad_norm = self.update_actor(obs)
+                train_result["actor_loss"].append(actor_loss)
+                train_result["actor_grad_norm"].append(actor_grad_norm)
 
-            soft_update(self.critic_target, self.critic, self.ddpg_config.tau)
-            if not self.ddpg_config.no_tgt_actor:
-                soft_update(self.actor_target, self.actor, self.ddpg_config.tau)
+            if self.mini_epoch % self.ddpg_config.update_targets_interval == 0:
+                soft_update(self.critic_target, self.critic, self.ddpg_config.tau)
+                if not self.ddpg_config.no_tgt_actor:
+                    soft_update(self.actor_target, self.actor, self.ddpg_config.tau)
 
         train_result = {k: torch.stack(v) for k, v in train_result.items()}
         return self.summary_stats(train_result)
@@ -214,11 +220,14 @@ class DDPG(ActorCriticBase):
             "metrics/episode_lengths": self.episode_lengths.mean(),
         }
         log_dict = {
-            "train/loss/actor": torch.mean(train_result["actor_loss"]).item(),
+            "train/epoch": self.epoch,
+            "train/mini_epoch": self.mini_epoch,
             "train/loss/critic": torch.mean(train_result["critic_loss"]).item(),
-            "train/grad_norm/actor": torch.mean(train_result["actor_grad_norm"]).item(),
             "train/grad_norm/critic": torch.mean(train_result["critic_grad_norm"]).item(),
         }
+        if "actor_loss" in train_result:
+            log_dict["train/loss/actor"] = torch.mean(train_result["actor_loss"]).item()
+            log_dict["train/grad_norm/actor"] = torch.mean(train_result["actor_grad_norm"]).item()
         return {**metrics, **log_dict}
 
     def update_critic(self, obs, action, reward, next_obs, done):
