@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from ..nets import Dist
+from .utils import weight_init_orthogonal_, weight_init_uniform_
 
 
 class MLP(nn.Module):
@@ -82,6 +83,7 @@ class Actor(nn.Module):
         fixed_sigma=None,
         mlp_kwargs={},
         dist_kwargs={},
+        weight_init=None,
     ):
         super().__init__()
         self.tanh_policy = tanh_policy
@@ -99,6 +101,20 @@ class Actor(nn.Module):
             else:
                 self.sigma = nn.Linear(self.actor_mlp.out_dim, action_dim)
             self.dist = Dist(**dist_kwargs)
+
+        self.weight_init = weight_init
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        if self.weight_init == "orthogonal":  # drqv2
+            self.actor_mlp.apply(weight_init_orthogonal_)
+        elif self.weight_init == "uniform":  # original DDPG paper
+            self.actor_mlp.apply(weight_init_uniform_)
+            nn.init.uniform_(self.mu.weight, -0.003, 0.003)
+        elif self.weight_init == None:
+            pass
+        else:
+            raise NotImplementedError(self.weight_init)
 
     def forward(self, x, std=None):
         x = self.actor_mlp(x)
@@ -121,7 +137,7 @@ class Actor(nn.Module):
 
 
 class EnsembleQ(nn.Module):
-    def __init__(self, state_dim, action_dim, n_critics=2, mlp_kwargs={}):
+    def __init__(self, state_dim, action_dim, n_critics=2, mlp_kwargs={}, weight_init=None):
         super().__init__()
         self.n_critics = n_critics
         critics = []
@@ -129,6 +145,21 @@ class EnsembleQ(nn.Module):
             q = MLP(state_dim + action_dim, out_dim=1, **mlp_kwargs)
             critics.append(q)
         self.critics = nn.ModuleList(critics)
+
+        self.weight_init = weight_init
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for critic in self.critics:
+            if self.weight_init == "orthogonal":  # drqv2
+                critic.apply(weight_init_orthogonal_)
+            elif self.weight_init == "uniform":  # original DDPG paper
+                critic.apply(weight_init_uniform_)
+                nn.init.uniform_(critic.mlp[-1].weight, -0.003, 0.003)
+            elif self.weight_init == None:
+                pass
+            else:
+                raise NotImplementedError(self.weight_init)
 
     def forward(self, state, action):
         input_x = torch.cat((state, action), dim=1)
