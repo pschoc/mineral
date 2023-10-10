@@ -32,7 +32,7 @@ class MLP(nn.Module):
     @staticmethod
     def init_weights(sequential, scales):
         [
-            torch.nn.init.orthogonal_(module.weight, gain=scales[idx])
+            nn.init.orthogonal_(module.weight, gain=scales[idx])
             for idx, module in enumerate(mod for mod in sequential if isinstance(mod, nn.Linear))
         ]
 
@@ -57,13 +57,13 @@ class ActorCritic(nn.Module):
         self.actor_mlp = MLP(input_size=mlp_in_dim, units=self.units, act_type=self.act_type, norm_type=self.norm_type)
         if self.separate_value_mlp:
             self.value_mlp = MLP(input_size=mlp_in_dim, units=self.units, act_type=self.act_type, norm_type=self.norm_type)
-        self.value = torch.nn.Linear(out_size, 1)
-        self.mu = torch.nn.Linear(out_size, action_dim)
+        self.value = nn.Linear(out_size, 1)
+        self.mu = nn.Linear(out_size, action_dim)
 
         if self.fixed_sigma:
             self.sigma = nn.Parameter(torch.zeros(action_dim, requires_grad=True, dtype=torch.float32), requires_grad=True)
         else:
-            self.sigma = torch.nn.Linear(out_size, action_dim)
+            self.sigma = nn.Linear(out_size, action_dim)
 
         actor_dist_config = config.get('actor_dist', {})
         self.dist = Dist(**actor_dist_config)
@@ -76,11 +76,11 @@ class ActorCritic(nn.Module):
                 fan_out = m.kernel_size[0] * m.out_channels
                 m.weight.data.normal_(mean=0.0, std=np.sqrt(2.0 / fan_out))
                 if getattr(m, 'bias', None) is not None:
-                    torch.nn.init.zeros_(m.bias)
+                    nn.init.zeros_(m.bias)
             if isinstance(m, nn.Linear):
                 # nn.init.orthogonal_(m.weight.data, gain=1.41421356237)
                 if getattr(m, 'bias', None) is not None:
-                    torch.nn.init.zeros_(m.bias)
+                    nn.init.zeros_(m.bias)
 
         self.actor_mlp.apply(weight_init)
         if self.separate_value_mlp:
