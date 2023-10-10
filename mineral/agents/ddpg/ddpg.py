@@ -227,10 +227,9 @@ class DDPG(ActorCriticBase):
             target_Q = self.critic_target.get_q_min(next_obs, next_actions)
             target_Q = reward + (1 - done) * (self.ddpg_config.gamma**self.ddpg_config.nstep) * target_Q
 
-        current_Q1, current_Q2 = self.critic.get_q1_q2(obs, action)
-        critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
+        current_Qs = self.critic.get_q_values(obs, action)
+        critic_loss = torch.sum(torch.stack([F.mse_loss(current_Q, target_Q) for current_Q in current_Qs]))
         grad_norm = self.optimizer_update(self.critic_optimizer, critic_loss)
-
         return critic_loss, grad_norm
 
     def update_actor(self, obs):
@@ -307,7 +306,8 @@ class DDPG(ActorCriticBase):
 @torch.no_grad()
 def soft_update(target_net, current_net, tau: float):
     for tar, cur in zip(target_net.parameters(), current_net.parameters()):
-        tar.data.copy_(cur.data * tau + tar.data * (1.0 - tau))
+        # tar.data.copy_(cur.data * tau + tar.data * (1.0 - tau))
+        tar.mul_(1.0 - tau).add_(cur * tau)
 
 
 def handle_timeout(dones, info, timeout_keys=('time_outs', 'TimeLimit.truncated')):

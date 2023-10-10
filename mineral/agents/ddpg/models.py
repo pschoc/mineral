@@ -1,4 +1,4 @@
-from typing import List, Sequence
+from typing import Sequence
 
 import torch
 import torch.nn as nn
@@ -17,11 +17,13 @@ class MLP(nn.Module):
         act_kwargs=dict(inplace=True),
         norm_type=None,
         norm_kwargs={},
-        plain_last=False,
+        plain_last=None,
     ):
         super().__init__()
         if out_dim is not None:
             units = [*units, out_dim]
+        if plain_last is None:
+            plain_last = True if out_dim is not None else False
         layers = []
         for i, output_size in enumerate(units):
             layers.append(nn.Linear(in_dim, output_size))
@@ -118,39 +120,26 @@ class Actor(nn.Module):
         return mu, sigma, dist
 
 
-class DoubleQ(nn.Module):
-    def __init__(self, state_dim, act_dim):
-        super().__init__()
-        if isinstance(state_dim, Sequence):
-            state_dim = state_dim[0]
-        self.net_q1 = MLPNet(in_dim=state_dim + act_dim, out_dim=1)
-        self.net_q2 = MLPNet(in_dim=state_dim + act_dim, out_dim=1)
-
-    def get_q_min(self, state: Tensor, action: Tensor) -> Tensor:
-        return torch.min(*self.get_q1_q2(state, action))  # min Q value
-
-    def get_q1_q2(self, state: Tensor, action: Tensor) -> (Tensor, Tensor):
-        input_x = torch.cat((state, action), dim=1)
-        return self.net_q1(input_x), self.net_q2(input_x)  # two Q values
-
-    def get_q1(self, state: Tensor, action: Tensor) -> (Tensor, Tensor):
-        input_x = torch.cat((state, action), dim=1)
-        return self.net_q1(input_x)
-
-
 class EnsembleQ(nn.Module):
-    def __init__(self, state_dim, act_dim, n_critics=2):
+    def __init__(self, state_dim, action_dim, n_critics=2, mlp_kwargs={}):
         super().__init__()
         self.n_critics = n_critics
         critics = []
         for _ in range(n_critics):
-            critics.append(MLPNet(in_dim=state_dim + act_dim, out_dim=1))
+            q = MLP(state_dim + action_dim, out_dim=1, **mlp_kwargs)
+            critics.append(q)
         self.critics = nn.ModuleList(critics)
 
-    def forward(self, state: Tensor, action: Tensor) -> List[Tensor]:
+    def forward(self, state, action):
         input_x = torch.cat((state, action), dim=1)
-        qvalue_list = [critic(input_x) for critic in self.critics]
-        return qvalue_list
+        Qs = [critic(input_x) for critic in self.critics]
+        return Qs
+
+    def get_q_min(self, state, action):
+        return torch.min(*self.forward(state, action))
+
+    def get_q_values(self, state, action):
+        return self.forward(state, action)
 
 
 class DistributionalDoubleQ(nn.Module):
@@ -168,10 +157,6 @@ class DistributionalDoubleQ(nn.Module):
         Q2 = torch.sum(Q2 * self.z_atoms.to(self.device), dim=1)
         return torch.min(Q1, Q2)  # min Q value
 
-    def get_q1_q2(self, state: Tensor, action: Tensor) -> (Tensor, Tensor):
+    def get_q_values(self, state: Tensor, action: Tensor) -> Sequence[Tensor]:
         input_x = torch.cat((state, action), dim=1)
         return torch.softmax(self.net_q1(input_x), dim=1), torch.softmax(self.net_q2(input_x), dim=1)  # two Q values
-
-    def get_q1(self, state: Tensor, action: Tensor) -> (Tensor, Tensor):
-        input_x = torch.cat((state, action), dim=1)
-        return torch.softmax(self.net_q1(input_x), dim=1)
