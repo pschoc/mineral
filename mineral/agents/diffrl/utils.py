@@ -31,7 +31,7 @@ def soft_update(module, module_target, alpha: float):
 def grad_norm(params):
     grad_norm = 0.0
     for p in params:
-        if p.grad is not None:
+        if p.grad is not None and not torch.isnan(p.grad).any():
             grad_norm += torch.sum(p.grad**2)
     return torch.sqrt(grad_norm)
 

@@ -432,8 +432,8 @@ class SHAC(Agent):
                     f'ep_lengths {mean_episode_lengths:.2f},',
                     f'ep_discounted_rewards {mean_episode_discounted_rewards:.2f},',
                     f'value_loss {metrics["train_stats/value_loss"]:.4f},',
-                    f'grad_norm_before_clip/actor {metrics["train_stats/grad_norm_before_clip/actor"]:.2f},',
-                    f'grad_norm_after_clip/actor {metrics["train_stats/grad_norm_after_clip/actor"]:.2f},',
+                    f'grad_norm_before_clip/actor {metrics["train_stats/grad_norm_before_clip/actor"]:.2e},',
+                    f'grad_norm_after_clip/actor {metrics["train_stats/grad_norm_after_clip/actor"]:.2e},',
                     f'\b\b |',
                 )
 
@@ -515,8 +515,14 @@ class SHAC(Agent):
                 grad_norm_after_clip = grad_norm(self.actor.parameters())
 
                 # sanity check
-                if torch.isnan(grad_norm_before_clip) or grad_norm_before_clip > 1e6:
-                    print('NaN gradient', grad_norm_before_clip)
+                if torch.isnan(grad_norm_before_clip) or torch.isinf(grad_norm_before_clip):
+                    print('NaN or inf gradient', grad_norm_before_clip)
+                    # raise ValueError
+                    raise KeyboardInterrupt
+
+                max_grad_norm = 1e6
+                if grad_norm_before_clip > max_grad_norm:
+                    print('grad_norm_before_clip = ', grad_norm_before_clip, ', max_grad_norm', max_grad_norm)
                     # raise ValueError
                     raise KeyboardInterrupt
 
@@ -790,18 +796,21 @@ class SHAC(Agent):
                 for params in self.critic.parameters():
                     params.grad.nan_to_num_(0.0, 0.0, 0.0)
 
+                grad_norm_before_clip = grad_norm(self.critic.parameters())        
+                grad_norm_after_clip = grad_norm_before_clip
                 if self.shac_config.truncate_grads:
-                    # TODO: self.encoder.parameters()
-                    grad_norm_before_clip = grad_norm(self.critic.parameters())
-                    grad_norms_before_clip.append(grad_norm_before_clip)
+                    # TODO: self.encoder.parameters()                                
                     if self.shac_config.get("critic_agc_clip", None) is not None:
                         clip_agc_(self.critic.parameters(), self.shac_config.critic_agc_clip)
                     elif self.shac_config.get("max_grad_value", None) is not None:
                         nn.utils.clip_grad_value_(self.critic.parameters(), self.shac_config.max_grad_value)
                     elif self.shac_config.max_grad_norm is not None:
                         nn.utils.clip_grad_norm_(self.critic.parameters(), self.shac_config.max_grad_norm)
-                    grad_norm_after_clip = grad_norm(self.critic.parameters())
-                    grad_norms_after_clip.append(grad_norm_after_clip)
+                    grad_norm_after_clip = grad_norm(self.critic.parameters())                    
+                
+                # append grad_norms to list
+                grad_norms_before_clip.append(grad_norm_before_clip)
+                grad_norms_after_clip.append(grad_norm_after_clip)
 
                 self.critic_optim.step()
                 total_critic_loss += critic_loss

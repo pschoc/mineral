@@ -1,0 +1,45 @@
+suite: rewarped
+name: WarpDrone
+
+env:
+  env_suite: drone_parcour
+  env_name: DroneParcour
+  numEnvs: 16
+  render: False
+  render_mode: opengl
+  randomize: True
+  no_grad: True
+  no_env_offset: False
+  
+  # Arena and environment settings
+  arena_shape: [4.0, 4.0, 4.0]
+  num_obstacles: 1
+  obstacle_min_size: 0.2
+  obstacle_max_size: 2.0  
+  termination_distance: 0.1
+  action_penalty: 0.0
+  
+  # Drone construction parameters
+  # Carbon fiber properties
+  density_carbon: 1600.0  # kg/m³ (carbon fiber composite)
+  
+  # Arm specifications (carbon tubes)
+  arm_specs: [0.030, 0.002, 0.650]  # [diameter, thickness, full-span (diagonal, tip to tip))] in meters
+  
+  # Main body specifications
+  body_dimensions: [0.15, 0.15, 0.1]  # [length, width, height] in meters
+  body_mass: 6.000  # 1kg (battery + electronics + payload)
+  
+  # Propeller dimensions (diameter x pitch in inches)
+  prop_diameter_inch: 15.0     # 18 inch diameter
+  prop_pitch_inch: 6.1        # 6.1 inch pitch (steepness)
+  prop_thickness: 0.002      # 1cm thick
+  
+  # Battery and motor specifications
+  lipo_cells: 6             # 6S battery (6 cells in series)
+  motor_kv: 220             # 420 KV (RPM per volt)
+  nominal_cell_voltage: 4.2 # 4.2V per cell (nominal)
+  
+episode_length: 128
+early_termination: True
+env_autoresets: True
