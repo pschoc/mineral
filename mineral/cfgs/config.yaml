@@ -52,9 +52,9 @@ rl_device: ???
 # which Vulkan graphics device ID to use for rendering
 graphics_device_id: 0
 # disables rendering
-headless: True
+headless: False
 # whether to call env.render(mode='rgb_array')
-env_render: False
+env_render: True
 # whether to use multi-gpu training with `huggingface.Accelerate`
 multi_gpu: False
 

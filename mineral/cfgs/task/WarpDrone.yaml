@@ -4,19 +4,25 @@ name: WarpDrone
 env:
   env_suite: drone_parcour
   env_name: DroneParcour
-  numEnvs: 16
-  render: False
+  numEnvs: 32
+  render: False 
   render_mode: opengl
   randomize: True
-  no_grad: True
+  no_grad: False
   no_env_offset: False
+  max_episode_length: 500
+  num_eval_episodes: 1
+  early_termination: True
   
-  # Arena and environment settings
-  arena_shape: [4.0, 4.0, 4.0]
-  num_obstacles: 1
+  # Arena and environment bounds: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
+  spawn_bounds: [[-8.0, 8.0], [0.0, 8.0], [-8.0, 8.0]]  # Where drone can spawn
+  arena_bounds: [[-12.0, 12.0], [0.0, 8.0], [-12.0, 12.0]]  # Physical arena limits
+  target_bounds: [[-10.0, 10.0], [1.0, 6.0], [-10.0, 10.0]]  # Where targets spawn
+  num_obstacles: 3
   obstacle_min_size: 0.2
-  obstacle_max_size: 2.0  
-  termination_distance: 0.1
+  obstacle_max_size: 2.0
+  
+  termination_distance: 0.5
   action_penalty: 0.0
   
   # Drone construction parameters
@@ -30,6 +36,9 @@ env:
   body_dimensions: [0.15, 0.15, 0.1]  # [length, width, height] in meters
   body_mass: 6.000  # 1kg (battery + electronics + payload)
   
+  # motor specs
+  motor_specs: [0.07, 0.02, 0.200]  # [diameter, thickness, weight in kg]
+  
   # Propeller dimensions (diameter x pitch in inches)
   prop_diameter_inch: 15.0     # 18 inch diameter
   prop_pitch_inch: 6.1        # 6.1 inch pitch (steepness)
@@ -39,7 +48,5 @@ env:
   lipo_cells: 6             # 6S battery (6 cells in series)
   motor_kv: 220             # 420 KV (RPM per volt)
   nominal_cell_voltage: 4.2 # 4.2V per cell (nominal)
-  
-episode_length: 128
-early_termination: True
+
 env_autoresets: True
