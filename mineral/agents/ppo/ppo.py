@@ -357,7 +357,7 @@ class PPO(DAPGMixin, Agent):
         dones = torch.zeros((self.num_actors,), dtype=torch.bool, device=self.device)
 
         sample = True
-        total_eval_episodes = self.num_actors * 2
+        total_eval_episodes = self.num_actors * self.env.num_eval_episodes
         eval_metrics = self._create_metrics(total_eval_episodes, self.metrics_kwargs)
         with self._as_metrics(eval_metrics), torch.no_grad():
             while self.metrics.num_episodes < total_eval_episodes:
