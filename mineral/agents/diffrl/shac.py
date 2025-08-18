@@ -518,13 +518,13 @@ class SHAC(Agent):
                 if torch.isnan(grad_norm_before_clip) or torch.isinf(grad_norm_before_clip):
                     print('NaN or inf gradient', grad_norm_before_clip)
                     # raise ValueError
-                    raise KeyboardInterrupt
+                    # raise KeyboardInterrupt
 
                 max_grad_norm = 1e6
                 if grad_norm_before_clip > max_grad_norm:
                     print('grad_norm_before_clip = ', grad_norm_before_clip, ', max_grad_norm', max_grad_norm)
                     # raise ValueError
-                    raise KeyboardInterrupt
+                    # raise KeyboardInterrupt
 
             if self.with_logprobs:
                 results["entropy"].append(-1.0 * self.logprobs.mean().detach())
@@ -888,7 +888,7 @@ class SHAC(Agent):
         self.set_eval()
 
         episode_rewards, episode_lengths, episode_discounted_rewards = self.evaluate_policy(
-            num_episodes=self.num_actors * 2, sample=True
+            num_episodes=self.num_actors * self.env.num_eval_episodes, sample=True
         )
 
         metrics = {
