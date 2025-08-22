@@ -4,23 +4,51 @@ name: WarpDrone
 env:
   env_suite: drone_parcour
   env_name: DroneParcour
-  numEnvs: 32
-  render: False 
+  numEnvs: 2
+  render: True 
   render_mode: opengl
+  render_fps: 3
   randomize: True
   no_grad: False
-  no_env_offset: False
-  max_episode_length: 500
-  num_eval_episodes: 1
+  no_env_offset: True
+  max_episode_length: 1000
+  num_eval_episodes: 100
   early_termination: True
+  ground_plane: True
+  integrator: euler
+  separate_collision_group_per_env: False
+
+  is_render_targets: True  # Whether to render target coordinate frames
   
   # Arena and environment bounds: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
-  spawn_bounds: [[-8.0, 8.0], [0.0, 8.0], [-8.0, 8.0]]  # Where drone can spawn
-  arena_bounds: [[-12.0, 12.0], [0.0, 8.0], [-12.0, 12.0]]  # Physical arena limits
-  target_bounds: [[-10.0, 10.0], [1.0, 6.0], [-10.0, 10.0]]  # Where targets spawn
-  num_obstacles: 3
-  obstacle_min_size: 0.2
-  obstacle_max_size: 2.0
+  spawn_bounds: [[-4.0, 4.0], [2.0, 3.0], [-4.0, 4.0]]  # Where drone can spawn
+  arena_bounds: [[-15.0, 15.0], [0.0, 4.0], [-15.0, 15.0]]  # Physical arena limits
+  target_bounds: [[-4.0, 4.0], [1.0, 3.0], [-4.0, 4.0]]  # Where targets spawn
+
+  # Drone spawn parameters
+  initial_drone_attitude_euler_deg: [30.0, 30.0, 30.0]  # Initial attitude in degrees
+  initial_drone_lin_vel: [10.0, 10.0, 10.0]  # Initial linear velocity in m/s
+  initial_drone_ang_vel: [2.0, 2.0, 2.0]  # Initial angular velocity in rad/s
+  
+  # uncertainty at spawn
+  three_sigma_initial_attitude_deg: [30.0, 30.0, 30.0]  # [roll, pitch, yaw] in degrees
+  three_sigma_initial_lin_vel: [0.0, 0.0, 0.0]  # m/s
+  three_sigma_initial_ang_vel: [0.0, 0.0, 0.0]  # rad/s
+
+  # Target parameters
+  target_attitude_euler_deg: [0.0, 0.0, 0.0]  # Initial attitude in degrees
+  target_lin_vel: [0.0, 0.0, 0.0]  # Initial linear velocity in m/s
+  target_ang_vel: [0.0, 0.0, 0.0]  # Initial angular velocity in rad/s
+
+  # uncertainty at target
+  three_sigma_target_attitude_deg: [0.0, 0.0, 0.0]  # [roll, pitch, yaw] in degrees
+  three_sigma_target_lin_vel: [0.0, 0.0, 0.0]  # m/s
+  three_sigma_target_ang_vel: [0.0, 0.0, 0.0]  # rad/s
+
+  # obstacle settings
+  num_obstacles_max: 1
+  obstacle_min_size: 0.3
+  obstacle_max_size: 1.0
   
   termination_distance: 0.5
   action_penalty: 0.0
