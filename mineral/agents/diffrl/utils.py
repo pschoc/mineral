@@ -33,6 +33,8 @@ def grad_norm(params):
     for p in params:
         if p.grad is not None and not torch.isnan(p.grad).any():
             grad_norm += torch.sum(p.grad**2)
+        if torch.isnan(p.grad).any():
+            grad_norm += torch.sum(torch.randn_like(p.grad)**2)
     return torch.sqrt(grad_norm)
 
 

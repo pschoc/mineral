@@ -676,7 +676,7 @@ class SHAC(Agent):
                         if (
                             (torch.isnan(v[id]).sum() > 0)
                             or (torch.isinf(v[id]).sum() > 0)
-                            or ((torch.abs(v[id]) > 1e6).sum() > 0)
+                            # or ((torch.abs(v[id]) > 1e6).sum() > 0)
                         ):  # ugly fix for nan values
                             print(f'nan value: {k}')
                             nan = True

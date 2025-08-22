@@ -39,17 +39,17 @@ shac:
   max_epochs: 1e4
   max_agent_steps: 1e8
   horizon_len: 32
-  num_critic_batches: 4
+  num_critic_batches: 40
 
   gamma: 0.99
   critic_method: td-lambda  # td-lambda | one-step
   lambda: 0.95
   critic_iterations: 1
-  normalize_ret: False
+  normalize_ret: True
   
   optim_type: AdamW
-  actor_optim_kwargs: {lr: 2e-3, betas: [0.7, 0.95]}
-  critic_optim_kwargs: {lr: 5e-4, betas: [0.7, 0.95]}
+  actor_optim_kwargs: {lr: 2e-2, betas: [0.7, 0.95]}
+  critic_optim_kwargs: {lr: 5e-3, betas: [0.7, 0.95]}
   lr_schedule: linear  # linear | constant
   target_critic_alpha: null
   max_grad_norm: 1.0
