@@ -136,7 +136,18 @@ class WandbWriter:
             if len(value.shape) == 0:
                 bystep[step][name] = value.item()
             elif len(value.shape) == 1:
-                bystep[step][name] = wandb.Histogram(value)
+                # Check if we have enough range and valid data for histogram
+                if (len(np.unique(value)) > 1 and 
+                    np.isfinite(value).all() and
+                    len(value) >= 2 and
+                    (np.max(value) - np.min(value)) > 1e-10):
+                    try:
+                        bystep[step][name] = wandb.Histogram(value)
+                    except ValueError:
+                        # Fallback if histogram still fails
+                        bystep[step][name] = value.mean() if len(value) > 0 else 0
+                else:
+                    bystep[step][name] = value.mean() if len(value) > 0 else 0
             # elif len(value.shape) == 5:
             #     value = value.transpose(0, 1, 4, 2, 3)  # -> (B, T, C, H, W)
             #     value = _prepare_video(value)

@@ -4,27 +4,27 @@ name: WarpDrone
 env:
   env_suite: drone_parcour
   env_name: DroneParcour
-  numEnvs: 512
-  render: False 
+  numEnvs: 4
+  render: True
   debug_pov: False
   render_mode: opengl
-  render_fps: 10
+  render_fps: 4
   randomize: True
   no_grad: False
   no_env_offset: True
-  max_episode_length: 1500
+  max_episode_length: 1000
   num_eval_episodes: 100
   early_termination: True  
   integrator: xpbd
-  separate_collision_group_per_env: False
+  separate_collision_group_per_env: True
   ground_plane: True
 
   use_depth_observations: True
   use_collision_distances: True
 
   # depth camera settings
-  cam_width: 24
-  cam_height: 16
+  cam_width: 8
+  cam_height: 6
   cam_fov_x_deg: 90.0
   cam_fov_y_deg: 60.0
   cam_min_depth: 0.2
@@ -34,10 +34,10 @@ env:
   is_render_targets: True  # Whether to render target coordinate frames
   
   # Arena and environment bounds: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
-  spawn_bounds: [[-10.0, 10.0], [1.0, 3.0], [-10.0, 10.0]]  # Where drone can spawn
+  spawn_bounds: [[-10.0, 10.0], [2.0, 2.0], [-10.0, 10.0]]  # Where drone can spawn
   room_bounds: [[-10.0, 10.0], [0.0, 4.0], [-10.0, 10.0]]  # Physical arena limits
-  arena_bounds: [[-15.0, 15.0], [-4.0, 4.0], [-15.0, 15.0]]  # Physical arena limits
-  target_bounds: [[-10.0, 10.0], [1.0, 3.0], [-10.0, 10.0]]  # Where targets spawn
+  arena_bounds: [[-15.0, 15.0], [0.0, 4.0], [-15.0, 15.0]]  # Physical arena limits
+  target_bounds: [[-10.0, 10.0], [2.0, 2.0], [-10.0, 10.0]]  # Where targets spawn
 
   # Drone spawn parameters
   initial_drone_attitude_euler_deg: [0.0, 0.0, 0.0]  # Initial attitude in degrees
@@ -61,7 +61,7 @@ env:
 
   # static obstacle settings
   num_static_obstacles: 0
-  obstacle_min_size: 0.3
+  obstacle_min_size: 0.5
   obstacle_max_size: 1.0
   
   termination_distance: 0.5
@@ -79,7 +79,8 @@ env:
   body_mass: 6.000  # 1kg (battery + electronics + payload)
   
   # motor specs
-  motor_specs: [0.07, 0.02, 0.200]  # [diameter, thickness, weight in kg]
+  motor_specs: [0.07, 0.02, 0.300]  # [diameter, thickness, weight in kg]
+  tilt_angle_deg: 20.0 
   
   # Propeller dimensions (diameter x pitch in inches)
   prop_diameter_inch: 15.0     # 18 inch diameter

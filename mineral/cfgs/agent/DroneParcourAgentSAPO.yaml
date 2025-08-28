@@ -5,14 +5,14 @@ print_every: 1
 ckpt_every: 100
 
 network:
-  normalize_input: True
+  normalize_input: False
   encoder: null
 
   actor: Actor
   actor_kwargs:
     weight_init: orthogonalg1
     mlp_kwargs:
-      units: [512, 256, 128]
+      units: [256, 128, 64]
       norm_type: LayerNorm
       act_type: SiLU
     dist_kwargs: {dist_type: squashed_normal, minlogstd: -5.0, maxlogstd: 2.0}
@@ -23,7 +23,7 @@ network:
   critic_kwargs:
     weight_init: orthogonalg1
     mlp_kwargs:
-      units: [512, 256, 128]
+      units: [256, 128, 64]
       norm_type: LayerNorm
       act_type: SiLU
     n_critics: 2
@@ -39,17 +39,17 @@ shac:
   max_epochs: 1e4
   max_agent_steps: 1e8
   horizon_len: 32
-  num_critic_batches: 40
+  num_critic_batches: 4
 
   gamma: 0.99
   critic_method: td-lambda  # td-lambda | one-step
   lambda: 0.95
   critic_iterations: 1
-  normalize_ret: True
+  normalize_ret: False
   
   optim_type: AdamW
-  actor_optim_kwargs: {lr: 2e-2, betas: [0.7, 0.95]}
-  critic_optim_kwargs: {lr: 5e-3, betas: [0.7, 0.95]}
+  actor_optim_kwargs: {lr: 2e-3, betas: [0.7, 0.95]}
+  critic_optim_kwargs: {lr: 5e-4, betas: [0.7, 0.95]}
   lr_schedule: linear  # linear | constant
   target_critic_alpha: null
   max_grad_norm: 1.0

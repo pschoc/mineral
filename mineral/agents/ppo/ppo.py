@@ -188,6 +188,7 @@ class PPO(DAPGMixin, Agent):
         self.dones = torch.zeros((self.num_actors,), dtype=torch.bool, device=self.device)
 
         while self.agent_steps < self.max_agent_steps:
+            # self.env.reset_static_obstacles()
             self.epoch += 1
 
             self.set_eval()
