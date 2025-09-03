@@ -1,0 +1,92 @@
+seed: ${..seed}
+algo: SHAC
+
+print_every: 1
+ckpt_every: 100
+
+network:
+  normalize_input: False  
+ 
+  encoder: MultiEncoder
+  encoder_kwargs:
+    # Regex patterns to match observation keys
+    cnn_keys: "visual_obs"        # Match keys containing depth images
+    mlp_keys: "^obs$"             # Match the main observation vector
+    concat_keys: "^cnn$|^mlp$"    # Concatenate both CNN and MLP outputs
+    
+    # Weight initialization
+    weight_init: orthogonal
+    weight_init_cnn: orthogonal
+    weight_init_mlp: orthogonal
+    
+    # CNN configuration for depth processing
+    cnn: ConvNet
+    cnn_kwargs:
+      channels: [64, 128, 256, 512]
+      kernel_sizes: [8, 4, 3, 3]
+      strides: [4, 2, 1, 1]
+      norm_type: LayerNorm
+      act_type: ELU
+    
+    # MLP configuration for other observations
+    mlp_kwargs:
+      units: [128]
+      norm_type: LayerNorm
+      act_type: ELU
+
+  actor: Actor
+  actor_kwargs:
+    weight_init: orthogonalg1
+    mlp_kwargs:
+      units: [64, 32]
+      norm_type: LayerNorm
+      act_type: ELU
+      # GRU options
+      use_gru: True
+      gru_hidden_size: 128
+      gru_num_layers: 2
+      gru_bidirectional: False
+      gru_batch_first: True    
+    fixed_sigma: False
+  tanh_clamp: True
+  
+  critic: Critic
+  critic_kwargs:
+    mlp_kwargs:
+      units: [64, 32]  # Much larger capacity
+      norm_type: LayerNorm
+      act_type: ELU    
+      # Add GRU for temporal value estimation
+      use_gru: True
+      gru_hidden_size: 128 
+      gru_num_layers: 2
+      gru_bidirectional: False
+      gru_batch_first: True    
+
+shac:
+  multi_gpu: ${...multi_gpu}
+  num_actors: ${...task.env.numEnvs}
+
+  reward_shaper:
+    fn: scale
+    scale: 1.0
+
+  max_epochs: 20000
+  max_agent_steps: 4.1e8
+  horizon_len: 32
+  num_critic_batches: 4
+
+  gamma: 0.99
+  critic_method: td-lambda  # td-lambda | one-step
+  lambda: 0.95
+  critic_iterations: 16
+  normalize_ret: False
+
+  optim_type: Adam
+  actor_optim_kwargs: {lr: 2e-3, betas: [0.7, 0.95]}
+  critic_optim_kwargs: {lr: 5e-4, betas: [0.7, 0.95]}
+  lr_schedule: linear  # linear | constant
+  target_critic_alpha: 0.6 # 0.995
+  no_target_critic: False
+  max_grad_norm: 1.0
+  truncate_grads: True

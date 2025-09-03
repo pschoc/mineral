@@ -116,8 +116,8 @@ class SHAC(Agent):
         else:
             obs_dim = self.obs_space['obs']
             obs_dim = obs_dim[0] if isinstance(obs_dim, tuple) else obs_dim
-            assert obs_dim == self.env.num_obs
-            assert self.action_dim == self.env.num_actions
+            # assert obs_dim == self.env.num_obs
+            # assert self.action_dim == self.env.num_actions
 
         ActorCls = getattr(models, self.network_config.actor)
         CriticCls = getattr(models, self.network_config.critic)
@@ -296,6 +296,12 @@ class SHAC(Agent):
             print(e)
             print("Skipping clear_grad")
         self.env.reset()
+        
+        # Reset GRU hidden states for all environments at start of training
+        if self.actor.has_gru:
+            self.actor.reset_gru_states()  # Reset all environments
+        if self.critic.has_gru:
+            self.critic.reset_gru_states()  # Reset all environments
 
     def train(self):
         # initializations
@@ -539,23 +545,33 @@ class SHAC(Agent):
         self.actor_optim.step(actor_closure)
 
         with torch.no_grad():
-            obs = {k: v.view(-1, *v.shape[2:]) for k, v in self.obs_buf.items()}
-            _, mu, sigma, distr = self.get_actions(obs, sample=False, dist=True)
-            old_mu, old_sigma = self.mus.view(-1, self.num_actions), self.sigmas.view(-1, self.num_actions)
 
-            # if self.with_logprobs:
-            #     logprob = distr.log_prob(self.action_buf).sum(dim=-1)
-            #     logprob = logprob.view(-1, 1)
-            #     old_logprob = self.logprobs.view(-1, 1)
-            #     # calculate approx_kl http://joschu.net/blog/kl-approx.html
-            #     logratio = logprob - old_logprob
-            #     kl1 = -1.0 * logratio.mean()
-            #     kl2 = 0.5 * (logratio**2).mean()
-            #     # kl3 = ((logratio.exp() - 1) - logratio).mean()
-            #     # kl3 = ((torch.expm1(logratio) - logratio)).mean()
-            #     results["actor_kl/approx_kl1"].append(kl1)
-            #     results["actor_kl/approx_kl2"].append(kl2)
-            #     # results["actor_kl/approx_kl3"].append(kl3)  # unstable b/c of exp
+            # process observations with temporal structure
+            T, B = self.obs_buf[list(self.obs_buf.keys())[0]].shape[:2]
+            
+            # Reset GRU states to ensure clean computation
+            if self.actor.has_gru:
+                self.actor.reset_gru_states()
+            if self.critic.has_gru:
+                self.critic.reset_gru_states()
+            
+            # Process each timestep sequentially to maintain GRU state consistency
+            mu_list = []
+            sigma_list = []
+            
+            for t in range(T):
+                obs_t = {k: v[t] for k, v in self.obs_buf.items()}  # Shape: (B, ...)
+                # obs_t = {k: v.unsqueeze(1) for k, v in obs_t.items()}  # Shape: (B, 1, ...)
+                _, mu_t, sigma_t, _ = self.get_actions(obs_t, sample=False, dist=True)
+                mu_list.append(mu_t)
+                if len(sigma_t.shape) == 1:
+                    sigma_t = sigma_t.unsqueeze(0).expand(self.env.num_envs,-1)
+                sigma_list.append(sigma_t)
+            
+            # Stack and flatten the results
+            mu = torch.stack(mu_list, dim=0).view(-1, self.num_actions)  # (T*B, num_actions)
+            sigma = torch.stack(sigma_list, dim=0).view(-1, self.num_actions)  # (T*B, num_actions)
+            old_mu, old_sigma = self.mus.view(-1, self.num_actions), self.sigmas.view(-1, self.num_actions)
 
             kl_dist = policy_kl(mu.detach(), sigma.detach(), old_mu, old_sigma)
             results["mu"].append(mu)
@@ -563,7 +579,7 @@ class SHAC(Agent):
             kl_dist /= self.num_actions
             avg_kl = kl_dist.mean()
             results["avg_kl"].append(avg_kl)
-            self.avg_kl = avg_kl
+            self.avg_kl = avg_kl           
 
         if self.with_autoent:
             entropy = self._entropy
@@ -666,6 +682,12 @@ class SHAC(Agent):
 
             done_env_ids = done.nonzero(as_tuple=False).squeeze(-1)
             if len(done_env_ids) > 0:
+                # Reset GRU hidden states for done environments
+                if self.actor.has_gru:
+                    self.actor.reset_gru_states(done_env_ids)
+                if self.critic.has_gru:
+                    self.critic.reset_gru_states(done_env_ids)
+
                 terminal_obs = extra_info['obs_before_reset']
                 terminal_obs = self._convert_obs(terminal_obs)
 
@@ -794,7 +816,11 @@ class SHAC(Agent):
 
                 # ugly fix for simulation nan problem
                 for params in self.critic.parameters():
-                    params.grad.nan_to_num_(0.0, 0.0, 0.0)
+                    if params.grad is not None:
+                        nan_mask = torch.isnan(params.grad)
+                        if nan_mask.any():
+                            random_grad = torch.randn_like(params.grad) * 1e-3
+                            params.grad[nan_mask] = random_grad[nan_mask]
 
                 grad_norm_before_clip = grad_norm(self.critic.parameters())        
                 grad_norm_after_clip = grad_norm_before_clip

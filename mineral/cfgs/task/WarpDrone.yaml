@@ -4,50 +4,61 @@ name: WarpDrone
 env:
   env_suite: drone_parcour
   env_name: DroneParcour
-  numEnvs: 4
+  numEnvs: 32
   render: True
-  debug_pov: False
+  debug_pov: True
   render_mode: opengl
-  render_fps: 4
+  render_fps: 1
   randomize: True
   no_grad: False
   no_env_offset: True
   max_episode_length: 1000
   num_eval_episodes: 100
   early_termination: True  
-  integrator: xpbd
+  integrator: euler
   separate_collision_group_per_env: True
   ground_plane: True
 
+  gravity: -9.81
+  max_target_lin_vel: 4.0
+  max_target_ang_vel: 1.0
+
   use_depth_observations: True
   use_collision_distances: True
+  has_static_obstacles: True
 
   # depth camera settings
-  cam_width: 8
-  cam_height: 6
-  cam_fov_x_deg: 90.0
-  cam_fov_y_deg: 60.0
-  cam_min_depth: 0.2
-  cam_max_depth: 14.0
+  cam_width: 24
+  cam_height: 16
+  cam_fov_x_deg: 120.0
+  cam_fov_y_deg: 90.0
+  cam_min_depth: 0.0
+  cam_max_depth: 20.0
   cam_offset_local: [0.0, 0.0, 0.0]
 
-  is_render_targets: True  # Whether to render target coordinate frames
+  # imu settings
+  imu_accel_bias_std: 0.05 # m/s²
+  imu_gyro_bias_std: 0.01 # rad/s
+  imu_accel_noise_std: 0.03 # m/s²
+  imu_gyro_noise_std: 0.01 # rad/s  
   
+  is_render_targets: True  # Whether to render target coordinate frames
+
   # Arena and environment bounds: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
-  spawn_bounds: [[-10.0, 10.0], [2.0, 2.0], [-10.0, 10.0]]  # Where drone can spawn
-  room_bounds: [[-10.0, 10.0], [0.0, 4.0], [-10.0, 10.0]]  # Physical arena limits
-  arena_bounds: [[-15.0, 15.0], [0.0, 4.0], [-15.0, 15.0]]  # Physical arena limits
-  target_bounds: [[-10.0, 10.0], [2.0, 2.0], [-10.0, 10.0]]  # Where targets spawn
+  spawn_bounds: [[-6.0, -3.0], [2.0, 2.0], [-8.0, 8.0]]  # Where drone can spawn
+  room_bounds: [[-16.0, 16.0], [0.0, 6.0], [-8.0, 8.0]]  # Physical arena limits
+  arena_bounds: [[-17.0, 17.0], [0.0, 6.0], [-9.0, 9.0]]  # Physical arena limits
+  target_bounds: [[13.0, 16.0], [1.0, 4.0], [-8.0, 8.0]]  # Where targets spawn
 
   # Drone spawn parameters
-  initial_drone_attitude_euler_deg: [0.0, 0.0, 0.0]  # Initial attitude in degrees
+  initial_drone_attitude_euler_deg: [30.0, 30.0, 30.0]  # Initial attitude in degrees
   initial_drone_lin_vel: [0.0, 0.0, 0.0]  # Initial linear velocity in m/s
   initial_drone_ang_vel: [0.0, 0.0, 0.0]  # Initial angular velocity in rad/s
-  
+
   # uncertainty at spawn
   three_sigma_initial_attitude_deg: [0.0, 0.0, 0.0]  # [roll, pitch, yaw] in degrees
-  three_sigma_initial_lin_vel: [0.0, 0.0, 0.0]  # m/s
-  three_sigma_initial_ang_vel: [0.0, 0.0, 0.0]  # rad/s
+  three_sigma_initial_lin_vel: [1.0, 1.0, 1.0]  # m/s
+  three_sigma_initial_ang_vel: [1.0, 1.0, 1.0]  # rad/s
 
   # Target parameters
   target_attitude_euler_deg: [0.0, 0.0, 0.0]  # Initial attitude in degrees
@@ -55,41 +66,37 @@ env:
   target_ang_vel: [0.0, 0.0, 0.0]  # Initial angular velocity in rad/s
 
   # uncertainty at target
-  three_sigma_target_attitude_deg: [0.0, 0.0, 0.0]  # [roll, pitch, yaw] in degrees
+  three_sigma_target_attitude_deg: [180.0, 180.0, 180.0]  # [roll, pitch, yaw] in degrees
   three_sigma_target_lin_vel: [0.0, 0.0, 0.0]  # m/s
   three_sigma_target_ang_vel: [0.0, 0.0, 0.0]  # rad/s
 
   # static obstacle settings
   num_static_obstacles: 0
-  obstacle_min_size: 0.5
-  obstacle_max_size: 1.0
-  
-  termination_distance: 0.5
-  action_penalty: 0.0
+  obstacle_min_size: 1.0
+  obstacle_max_size: 6.0
   
   # Drone construction parameters
   # Carbon fiber properties
   density_carbon: 1600.0  # kg/m³ (carbon fiber composite)
   
   # Arm specifications (carbon tubes)
-  arm_specs: [0.030, 0.002, 0.650]  # [diameter, thickness, full-span (diagonal, tip to tip))] in meters
+  arm_specs: [0.020, 0.002, 0.650]  # [diameter, thickness, full-span (diagonal, tip to tip))] in meters
   
   # Main body specifications
   body_dimensions: [0.15, 0.15, 0.1]  # [length, width, height] in meters
-  body_mass: 6.000  # 1kg (battery + electronics + payload)
+  body_mass: 5.000  # 1kg (battery + electronics + payload)
   
   # motor specs
-  motor_specs: [0.07, 0.02, 0.300]  # [diameter, thickness, weight in kg]
-  tilt_angle_deg: 20.0 
+  motor_specs: [0.06, 0.02, 0.200]  # [diameter, thickness, weight in kg]
+  tilt_angle_deg: 45.0 
   
   # Propeller dimensions (diameter x pitch in inches)
-  prop_diameter_inch: 15.0     # 18 inch diameter
-  prop_pitch_inch: 6.1        # 6.1 inch pitch (steepness)
-  prop_thickness: 0.002      # 1cm thick
+  prop_diameter_inch: 13.0 
+  prop_pitch_inch: 6.1  
+  prop_thickness: 0.01 
+  prop_weight: 0.030 
   
   # Battery and motor specifications
   lipo_cells: 6             # 6S battery (6 cells in series)
-  motor_kv: 220             # 420 KV (RPM per volt)
+  motor_kv: 420             # 420 KV (RPM per volt)
   nominal_cell_voltage: 4.2 # 4.2V per cell (nominal)
-
-env_autoresets: True
