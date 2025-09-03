@@ -30,38 +30,34 @@ network:
     
     # MLP configuration for other observations
     mlp_kwargs:
-      units: [128]
+      units: [128, 64]
       norm_type: LayerNorm
       act_type: ELU
+
+    # GRU configuration for temporal modeling on joint embeddings
+    use_gru: False
+    gru_hidden_size: 128
+    gru_num_layers: 1
+    gru_bidirectional: False
+    gru_batch_first: True
+    gru_dropout: 0.05
 
   actor: Actor
   actor_kwargs:
     weight_init: orthogonalg1
     mlp_kwargs:
-      units: [64, 32]
+      units: [128, 64, 32]
       norm_type: LayerNorm
       act_type: ELU
-      # GRU options
-      use_gru: True
-      gru_hidden_size: 128
-      gru_num_layers: 2
-      gru_bidirectional: False
-      gru_batch_first: True    
     fixed_sigma: False
   tanh_clamp: True
   
   critic: Critic
   critic_kwargs:
     mlp_kwargs:
-      units: [64, 32]  # Much larger capacity
+      units: [128, 64, 32]
       norm_type: LayerNorm
       act_type: ELU    
-      # Add GRU for temporal value estimation
-      use_gru: True
-      gru_hidden_size: 128 
-      gru_num_layers: 2
-      gru_bidirectional: False
-      gru_batch_first: True    
 
 shac:
   multi_gpu: ${...multi_gpu}
@@ -86,7 +82,7 @@ shac:
   actor_optim_kwargs: {lr: 2e-3, betas: [0.7, 0.95]}
   critic_optim_kwargs: {lr: 5e-4, betas: [0.7, 0.95]}
   lr_schedule: linear  # linear | constant
-  target_critic_alpha: 0.6 # 0.995
+  target_critic_alpha: 0.5 # 0.995
   no_target_critic: False
   max_grad_norm: 1.0
   truncate_grads: True

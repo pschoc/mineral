@@ -4,7 +4,7 @@ name: WarpDrone
 env:
   env_suite: drone_parcour
   env_name: DroneParcour
-  numEnvs: 32
+  numEnvs: 16
   render: True
   debug_pov: True
   render_mode: opengl
@@ -16,7 +16,7 @@ env:
   num_eval_episodes: 100
   early_termination: True  
   integrator: euler
-  separate_collision_group_per_env: True
+  separate_collision_group_per_env: False
   ground_plane: True
 
   gravity: -9.81

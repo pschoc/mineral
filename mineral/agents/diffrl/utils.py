@@ -69,3 +69,32 @@ class CriticDataset:
         obs = {k: v[start_idx:end_idx, ...] for k, v in self.obs.items()}
         target_values = self.target_values[start_idx:end_idx]
         return obs, target_values
+
+
+class SequentialCriticDataset:
+    """
+    Dataset for critic training that preserves temporal order for GRU-based encoders.
+    Instead of random batching, it provides sequences in temporal order to maintain
+    GRU hidden state consistency.
+    """
+    def __init__(self, obs, target_values, done_mask=None):
+        # Keep original temporal structure (T, B, ...)
+        self.obs = obs  # (T, B, ...)
+        self.target_values = target_values  # (T, B)
+        self.done_mask = done_mask  # (T, B) - indicates episode boundaries
+        
+        self.T, self.B = target_values.shape
+        
+    def __len__(self):
+        return self.T  # Number of time steps
+        
+    def __getitem__(self, t):
+        # Return data for time step t across all environments
+        obs_t = {k: v[t] for k, v in self.obs.items()}  # (B, ...)
+        target_values_t = self.target_values[t]  # (B,)
+        
+        if self.done_mask is not None:
+            done_t = self.done_mask[t]  # (B,) - which envs finished episodes at step t
+            return obs_t, target_values_t, done_t
+        else:
+            return obs_t, target_values_t

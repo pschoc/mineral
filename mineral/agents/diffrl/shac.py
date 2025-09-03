@@ -24,7 +24,7 @@ from ...common.timer import Timer
 from ...common.tracker import Tracker
 from ..agent import Agent
 from . import models
-from .utils import CriticDataset, adaptive_scheduler, grad_norm, policy_kl, soft_update
+from .utils import CriticDataset, SequentialCriticDataset, adaptive_scheduler, grad_norm, policy_kl, soft_update
 
 
 class SHAC(Agent):
@@ -164,6 +164,10 @@ class SHAC(Agent):
         # --- Target Networks ---
         self.encoder_target = deepcopy(self.encoder) if not self.shac_config.no_target_critic else self.encoder
         self.critic_target = deepcopy(self.critic) if not self.shac_config.no_target_critic else self.critic
+        
+        # Initialize encoder GRU states if present
+        if hasattr(self.encoder, 'use_gru') and self.encoder.use_gru:
+            self.encoder.init_gru_states(self.num_envs, self.device)
 
         # --- Replay Buffer ---
         assert self.num_actors == self.env.num_envs
@@ -227,6 +231,7 @@ class SHAC(Agent):
         # NOTE: obs_rms.normalize(...) occurs elsewhere
         if z is None:
             z = self.actor_encoder(obs)
+ 
         if self.actor_detach_z:
             if isinstance(z, dict):
                 z = {k: v.detach() for k, v in z.items()}
@@ -297,15 +302,55 @@ class SHAC(Agent):
             print("Skipping clear_grad")
         self.env.reset()
         
-        # Reset GRU hidden states for all environments at start of training
-        if self.actor.has_gru:
-            self.actor.reset_gru_states()  # Reset all environments
-        if self.critic.has_gru:
-            self.critic.reset_gru_states()  # Reset all environments
+        # Reset encoder GRU hidden states for all environments at start of training
+        if hasattr(self.encoder, 'use_gru') and self.encoder.use_gru:
+            self.encoder.reset_gru_states()  # Reset all environments
+        if hasattr(self.encoder_target, 'use_gru') and self.encoder_target.use_gru:
+            self.encoder_target.reset_gru_states()
 
     def train(self):
         # initializations
         self.initialize_env()
+
+        # Sanity check: Verify environment configuration
+        print(f"Training with {self.num_envs} environments")
+        print(f"Horizon length: {self.horizon_len}")
+        print(f"Actor encoder uses GRU: {hasattr(self.actor_encoder, 'use_gru') and self.actor_encoder.use_gru}")
+        print(f"Encoder uses GRU: {hasattr(self.encoder, 'use_gru') and self.encoder.use_gru}")
+        
+        # Check for NaN in network parameters at start
+        def check_network_parameters(network, name):
+            has_nan = False
+            for param_name, param in network.named_parameters():
+                if torch.isnan(param).any():
+                    print(f"WARNING: NaN detected in {name}.{param_name} at training start!")
+                    has_nan = True
+            return has_nan
+            
+        check_network_parameters(self.actor, "actor")
+        check_network_parameters(self.critic, "critic") 
+        check_network_parameters(self.encoder, "encoder")
+        if not self.share_encoder:
+            check_network_parameters(self.actor_encoder, "actor_encoder")
+        
+        # Check GRU state tensor sizes
+        if hasattr(self.encoder, 'use_gru') and self.encoder.use_gru:
+            if hasattr(self.encoder, 'gru_hidden_states') and self.encoder.gru_hidden_states is not None:
+                gru_batch_size = self.encoder.gru_hidden_states.shape[1]
+                print(f"Encoder GRU batch size: {gru_batch_size}")
+                if gru_batch_size != self.num_envs:
+                    print(f"WARNING: GRU batch size ({gru_batch_size}) != num_envs ({self.num_envs})")
+            else:
+                print("Encoder GRU hidden states not initialized yet")
+        
+        if hasattr(self.actor_encoder, 'use_gru') and self.actor_encoder.use_gru and self.actor_encoder != self.encoder:
+            if hasattr(self.actor_encoder, 'gru_hidden_states') and self.actor_encoder.gru_hidden_states is not None:
+                gru_batch_size = self.actor_encoder.gru_hidden_states.shape[1]
+                print(f"Actor encoder GRU batch size: {gru_batch_size}")
+                if gru_batch_size != self.num_envs:
+                    print(f"WARNING: Actor encoder GRU batch size ({gru_batch_size}) != num_envs ({self.num_envs})")
+            else:
+                print("Actor encoder GRU hidden states not initialized yet")
 
         while self.agent_steps < self.max_agent_steps:
             self.epoch += 1
@@ -372,7 +417,17 @@ class SHAC(Agent):
 
             self.encoder.train()
             self.critic.train()
-            dataset = CriticDataset(self.critic_batch_size, self.obs_buf, target_values, drop_last=False)
+            
+            # Check if encoder uses GRU - if so, use sequential training to preserve temporal coherence
+            encoder_uses_gru = hasattr(self.encoder, 'use_gru') and self.encoder.use_gru
+            
+            if encoder_uses_gru:
+                # Use sequential dataset that preserves temporal order for GRU hidden states
+                dataset = SequentialCriticDataset(self.obs_buf, target_values, self.done_mask)
+            else:
+                # Use regular random batching for non-GRU encoders
+                dataset = CriticDataset(self.critic_batch_size, self.obs_buf, target_values, drop_last=False)
+            
             self.timer.end("train/make_critic_dataset")
 
             self.timer.start("train/update_critic")
@@ -459,6 +514,14 @@ class SHAC(Agent):
     def update_actor(self):
         results = collections.defaultdict(list)
 
+        # Reset GRU states at the beginning of actor update to prevent backward graph conflicts
+        if hasattr(self.actor_encoder, 'use_gru') and self.actor_encoder.use_gru:
+            self.actor_encoder.reset_gru_states()
+        if hasattr(self.encoder, 'use_gru') and self.encoder.use_gru:
+            self.encoder.reset_gru_states()
+        if hasattr(self.encoder_target, 'use_gru') and self.encoder_target.use_gru:
+            self.encoder_target.reset_gru_states()
+
         # zero out just in case
         with torch.no_grad():
             self.action_buf.zero_()
@@ -499,6 +562,17 @@ class SHAC(Agent):
                 actor_loss = ((alpha * -entropy) - returns).mean()
             else:
                 actor_loss = -returns.mean()
+                
+            # Check for NaN in actor loss
+            if torch.isnan(actor_loss):
+                print("WARNING: NaN detected in actor loss!")
+                print(f"  raw_returns: {raw_returns}")
+                print(f"  returns mean: {returns.mean()}")
+                if hasattr(self, 'entropy'):
+                    print(f"  entropy mean: {entropy.mean()}")
+                # Use a small positive loss to avoid breaking training
+                actor_loss = torch.tensor(1e-6, device=actor_loss.device, requires_grad=True)
+                
             loss = actor_loss
 
             self.timer.start("train/actor_closure/backward_sim")
@@ -509,11 +583,27 @@ class SHAC(Agent):
                 if self.with_autoent:
                     self._entropy = distr_ents.detach().clone() if self.use_distr_ent else -1.0 * logprobs.detach().clone()
 
+                # Check for NaN gradients before clipping
+                has_nan_grad = False
+                for name, param in self.actor.named_parameters():
+                    if param.grad is not None and torch.isnan(param.grad).any():
+                        print(f"WARNING: NaN gradient detected in actor.{name}")
+                        print(f"  Grad shape: {param.grad.shape}")
+                        print(f"  NaN count: {torch.isnan(param.grad).sum()}")
+                        # Replace NaN gradients with zeros
+                        param.grad = torch.nan_to_num(param.grad, nan=0.0)
+                        has_nan_grad = True
+                        
+                if has_nan_grad:
+                    print("Fixed NaN gradients in actor parameters")
+
                 # TODO: self.encoder.parameters()
                 grad_norm_before_clip = grad_norm(self.actor.parameters())
                 if self.shac_config.truncate_grads:
                     if self.shac_config.get("actor_agc_clip", None) is not None:
-                        clip_agc_(self.actor.parameters(), self.shac_config.actor_agc_clip)
+                        # clip_agc_(self.actor.parameters(), self.shac_config.actor_agc_clip)
+                        # Note: clip_agc_ function not available, using regular grad norm clipping instead
+                        nn.utils.clip_grad_norm_(self.actor.parameters(), self.shac_config.actor_agc_clip)
                     elif self.shac_config.get("max_grad_value", None) is not None:
                         nn.utils.clip_grad_value_(self.actor.parameters(), self.shac_config.max_grad_value)
                     elif self.shac_config.max_grad_norm is not None:
@@ -549,19 +639,18 @@ class SHAC(Agent):
             # process observations with temporal structure
             T, B = self.obs_buf[list(self.obs_buf.keys())[0]].shape[:2]
             
-            # Reset GRU states to ensure clean computation
-            if self.actor.has_gru:
-                self.actor.reset_gru_states()
-            if self.critic.has_gru:
-                self.critic.reset_gru_states()
+            # Reset GRU states to ensure we start processing the stored trajectory 
+            # from the beginning with clean states
+            if hasattr(self.actor_encoder, 'use_gru') and self.actor_encoder.use_gru:
+                self.actor_encoder.reset_gru_states()
             
             # Process each timestep sequentially to maintain GRU state consistency
+            # The obs_buf contains temporally ordered data: [t0, t1, t2, ..., tT-1]
             mu_list = []
             sigma_list = []
             
             for t in range(T):
                 obs_t = {k: v[t] for k, v in self.obs_buf.items()}  # Shape: (B, ...)
-                # obs_t = {k: v.unsqueeze(1) for k, v in obs_t.items()}  # Shape: (B, 1, ...)
                 _, mu_t, sigma_t, _ = self.get_actions(obs_t, sample=False, dist=True)
                 mu_list.append(mu_t)
                 if len(sigma_t.shape) == 1:
@@ -683,10 +772,13 @@ class SHAC(Agent):
             done_env_ids = done.nonzero(as_tuple=False).squeeze(-1)
             if len(done_env_ids) > 0:
                 # Reset GRU hidden states for done environments
-                if self.actor.has_gru:
-                    self.actor.reset_gru_states(done_env_ids)
-                if self.critic.has_gru:
-                    self.critic.reset_gru_states(done_env_ids)
+                if hasattr(self.encoder, 'use_gru') and self.encoder.use_gru:
+                    self.encoder.reset_gru_states(done_env_ids)
+                if hasattr(self.encoder_target, 'use_gru') and self.encoder_target.use_gru:
+                    self.encoder_target.reset_gru_states(done_env_ids)
+                
+                # Use original done_env_ids for the rest of the logic (but filter in individual operations)
+                done_env_ids = done_env_ids[done_env_ids < self.num_envs]
 
                 terminal_obs = extra_info['obs_before_reset']
                 terminal_obs = self._convert_obs(terminal_obs)
@@ -799,22 +891,65 @@ class SHAC(Agent):
         return returns, logprobs, distr_ents
 
     def update_critic(self, dataset):
+
         results = collections.defaultdict(list)
         j = 0
         while j < self.critic_iterations:
-            total_critic_loss = 0.0
-            grad_norms_before_clip = []
-            grad_norms_after_clip = []
-            B = len(dataset)
-            for i in range(B):
-                batch_sample = dataset[i]
-                b_obs, b_target_values = batch_sample
-
+            # Check if we're using sequential dataset (for GRU) or regular batched dataset
+            is_sequential = isinstance(dataset, SequentialCriticDataset)
+            
+            if is_sequential:
+                # Sequential training for GRU-based encoders
+                total_critic_loss = 0.0
+                grad_norms_before_clip = []
+                grad_norms_after_clip = []
+                
+                # Reset GRU states at the beginning of each iteration
+                if hasattr(self.encoder, 'use_gru') and self.encoder.use_gru:
+                    self.encoder.reset_gru_states()
+                
                 self.critic_optim.zero_grad()
-                critic_loss = self.compute_critic_loss(b_obs, b_target_values)
-                critic_loss.backward()
+                
+                # Accumulate losses without backward pass
+                accumulated_loss = None
+                for t in range(len(dataset)):
+                    data = dataset[t]
+                    if len(data) == 3:
+                        b_obs, b_target_values, done_mask = data
+                    else:
+                        b_obs, b_target_values = data
+                        done_mask = None
+                    
+                    critic_loss = self.compute_critic_loss(b_obs, b_target_values)
+                    if accumulated_loss is None:
+                        accumulated_loss = critic_loss
+                    else:
+                        accumulated_loss = accumulated_loss + critic_loss
+                    total_critic_loss += critic_loss.detach()
+                    
+                    # Reset GRU states for environments that finished episodes
+                    if done_mask is not None and hasattr(self.encoder, 'use_gru') and self.encoder.use_gru:
+                        done_env_ids = torch.nonzero(done_mask, as_tuple=True)[0]
+                        if len(done_env_ids) > 0:
+                            # Debug: Check for out-of-bounds environment IDs in critic update
+                            if (done_env_ids >= self.num_envs).any():
+                                print(f"WARNING: Found out-of-bounds environment IDs in critic update!")
+                                print(f"  num_envs: {self.num_envs}")
+                                print(f"  done_mask.shape: {done_mask.shape}")
+                                print(f"  done_env_ids: {done_env_ids}")
+                                print(f"  done_env_ids.max(): {done_env_ids.max()}")
+                                print(f"  done_mask: {done_mask}")
+                            
+                            # Filter out invalid environment IDs that might be out of bounds
+                            valid_env_ids = done_env_ids[done_env_ids < self.num_envs]
+                            if len(valid_env_ids) > 0:
+                                self.encoder.reset_gru_states(valid_env_ids)
+                
+                # Single backward pass on accumulated loss
+                if accumulated_loss is not None:
+                    accumulated_loss.backward()
 
-                # ugly fix for simulation nan problem
+                # Gradient handling (once after accumulating all gradients)
                 for params in self.critic.parameters():
                     if params.grad is not None:
                         nan_mask = torch.isnan(params.grad)
@@ -825,23 +960,68 @@ class SHAC(Agent):
                 grad_norm_before_clip = grad_norm(self.critic.parameters())        
                 grad_norm_after_clip = grad_norm_before_clip
                 if self.shac_config.truncate_grads:
-                    # TODO: self.encoder.parameters()                                
                     if self.shac_config.get("critic_agc_clip", None) is not None:
-                        clip_agc_(self.critic.parameters(), self.shac_config.critic_agc_clip)
+                        nn.utils.clip_grad_norm_(self.critic.parameters(), self.shac_config.critic_agc_clip)
                     elif self.shac_config.get("max_grad_value", None) is not None:
                         nn.utils.clip_grad_value_(self.critic.parameters(), self.shac_config.max_grad_value)
                     elif self.shac_config.max_grad_norm is not None:
                         nn.utils.clip_grad_norm_(self.critic.parameters(), self.shac_config.max_grad_norm)
                     grad_norm_after_clip = grad_norm(self.critic.parameters())                    
                 
-                # append grad_norms to list
                 grad_norms_before_clip.append(grad_norm_before_clip)
                 grad_norms_after_clip.append(grad_norm_after_clip)
 
-                self.critic_optim.step()
-                total_critic_loss += critic_loss
+                self.critic_optim.step()  # Single optimizer step after accumulating all gradients
+                B = len(dataset)  # Number of time steps
+                
+            else:
+                # Regular batched training for non-GRU encoders
+                total_critic_loss = 0.0
+                grad_norms_before_clip = []
+                grad_norms_after_clip = []
+                B = len(dataset)
+                for i in range(B):
+                    batch_sample = dataset[i]
+                    b_obs, b_target_values = batch_sample
+
+                    self.critic_optim.zero_grad()
+                    critic_loss = self.compute_critic_loss(b_obs, b_target_values)
+                    critic_loss.backward()
+
+                # ugly fix for simulation nan problem
+                for params in self.critic.parameters():
+                    if params.grad is not None:
+                        nan_mask = torch.isnan(params.grad)
+                        if nan_mask.any():
+                            print(f"WARNING: NaN gradients detected in critic parameters!")
+                            print(f"  Param shape: {params.shape}")
+                            print(f"  NaN count: {nan_mask.sum()}")
+                            random_grad = torch.randn_like(params.grad) * 1e-3
+                            params.grad[nan_mask] = random_grad[nan_mask]
+
+                grad_norm_before_clip = grad_norm(self.critic.parameters())        
+                grad_norm_after_clip = grad_norm_before_clip
+                if self.shac_config.truncate_grads:
+                    # TODO: self.encoder.parameters()                                
+                    if self.shac_config.get("critic_agc_clip", None) is not None:
+                        # clip_agc_(self.critic.parameters(), self.shac_config.critic_agc_clip)  
+                        # Note: clip_agc_ function not available, using regular grad norm clipping instead
+                        nn.utils.clip_grad_norm_(self.critic.parameters(), self.shac_config.critic_agc_clip)
+                    elif self.shac_config.get("max_grad_value", None) is not None:
+                        nn.utils.clip_grad_value_(self.critic.parameters(), self.shac_config.max_grad_value)
+                    elif self.shac_config.max_grad_norm is not None:
+                        nn.utils.clip_grad_norm_(self.critic.parameters(), self.shac_config.max_grad_norm)
+                    grad_norm_after_clip = grad_norm(self.critic.parameters())
+                    
+                    # append grad_norms to list
+                    grad_norms_before_clip.append(grad_norm_before_clip)
+                    grad_norms_after_clip.append(grad_norm_after_clip)
+
+                    self.critic_optim.step()
+                    total_critic_loss += critic_loss
+            
             j += 1
-            value_loss = (total_critic_loss / B).detach()
+            value_loss = total_critic_loss / B
             results["value_loss"].append(value_loss)
             results["grad_norm_before_clip/critic"].append(torch.mean(torch.stack(grad_norms_before_clip)))
             results["grad_norm_after_clip/critic"].append(torch.mean(torch.stack(grad_norms_after_clip)))
