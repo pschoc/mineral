@@ -59,6 +59,7 @@ class SHAC(Agent):
         self.actor_loss_avgcritics = self.shac_config.get('actor_loss_avgcritics', False)
         self.critic_lrschedule = self.shac_config.get('critic_lrschedule', True)
         self.actor_detach_z = self.shac_config.get('actor_detach_z', False)
+        # self.critic_detach_encoder = self.shac_config.get('critic_detach_encoder', False)
 
         self.gamma = self.shac_config.get('gamma', 0.99)
         self.critic_method = self.shac_config.get('critic_method', 'one-step')  # ['one-step', 'td-lambda']
@@ -232,6 +233,7 @@ class SHAC(Agent):
                 z = {k: v.detach() for k, v in z.items()}
             else:
                 z = z.detach()
+
         mu, sigma, distr = self.actor(z)
         if sample:
             actions = distr.rsample()
@@ -295,14 +297,8 @@ class SHAC(Agent):
         except Exception as e:
             print(e)
             print("Skipping clear_grad")
-        self.env.reset()
+        self.env.reset()                
         
-        # Reset GRU hidden states for all environments at start of training
-        if self.actor.has_gru:
-            self.actor.reset_gru_states()  # Reset all environments
-        if self.critic.has_gru:
-            self.critic.reset_gru_states()  # Reset all environments
-
     def train(self):
         # initializations
         self.initialize_env()
@@ -341,19 +337,23 @@ class SHAC(Agent):
                 raise NotImplementedError(self.shac_config.lr_schedule)
 
             # train actor
-            self.timer.start("train/update_actor")
+            self.timer.start("train/update_actor")            
             self.actor_encoder.train()
-            self.actor.train()
-            # self.encoder.eval()
-            self.critic.eval()
-            # self.encoder_target.eval()
+            self.actor.train()     
+
+            self.critic.eval()            
             self.critic_target.eval()
+
             actor_results = self.update_actor()
             self.timer.end("train/update_actor")
 
-            # train critic
+            # train critic      
+            self.encoder.train()
+            self.critic.train()
+
             # prepare dataset
-            self.timer.start("train/make_critic_dataset")
+            self.timer.start("train/make_critic_dataset") 
+
             with torch.no_grad():
                 if self.entropy_in_targets:
                     self.compute_target_values_with_entropy()
@@ -369,14 +369,17 @@ class SHAC(Agent):
                 T, B = self.target_values.shape
                 target_values = self.target_values.view(T * B, 1)
                 target_values = target_values.view(T, B)
-
-            self.encoder.train()
-            self.critic.train()
-            dataset = CriticDataset(self.critic_batch_size, self.obs_buf, target_values, drop_last=False)
+            
             self.timer.end("train/make_critic_dataset")
-
+                        
             self.timer.start("train/update_critic")
-            critic_results = self.update_critic(dataset)
+            
+            if self.encoder.use_gru:
+                critic_results = self.update_critic_sequential(target_values)
+            else:                                               
+                dataset = CriticDataset(self.critic_batch_size, self.obs_buf, target_values, drop_last=False)                
+                critic_results = self.update_critic(dataset)
+            
             self.timer.end("train/update_critic")
             self.encoder.eval()
             self.critic.eval()
@@ -471,6 +474,15 @@ class SHAC(Agent):
 
         def actor_closure():
             self.actor_optim.zero_grad()
+
+            # detach gradients before each new episode -> but the gru hidden state should be kept (only reset on env reset)
+            if self.actor_encoder.use_gru and self.actor_encoder.gru_hidden is not None:
+                self.actor_encoder.gru_hidden = self.actor_encoder.gru_hidden.detach()
+            if self.encoder.use_gru and self.encoder.gru_hidden is not None:
+                self.encoder.gru_hidden = self.encoder.gru_hidden.detach()
+            if self.encoder_target.use_gru and self.encoder_target.gru_hidden is not None:                
+                self.encoder_target.gru_hidden = self.encoder_target.gru_hidden.detach()
+
             self.timer.start("train/actor_closure/actor_loss")
 
             self.timer.start("train/actor_closure/forward_sim")
@@ -502,8 +514,21 @@ class SHAC(Agent):
             loss = actor_loss
 
             self.timer.start("train/actor_closure/backward_sim")
-            loss.backward()
+            try:                
+                loss.backward()
+            except Exception as e:
+                print(e)
+                print("Skipping backward")
+                
             self.timer.end("train/actor_closure/backward_sim")
+
+            # Never carry graphs via hidden states between optimizer closure calls
+            if self.actor_encoder.use_gru and self.actor_encoder.gru_hidden is not None:
+                self.actor_encoder.gru_hidden = self.actor_encoder.gru_hidden.detach()
+            if self.encoder.use_gru and self.encoder.gru_hidden is not None:
+                self.encoder.gru_hidden = self.encoder.gru_hidden.detach()
+            if self.encoder_target.use_gru and self.encoder_target.gru_hidden is not None:                
+                self.encoder_target.gru_hidden = self.encoder_target.gru_hidden.detach()
 
             with torch.no_grad():
                 if self.with_autoent:
@@ -542,23 +567,17 @@ class SHAC(Agent):
             self.timer.end("train/actor_closure/actor_loss")
             return actor_loss
 
-        self.actor_optim.step(actor_closure)
+        self.actor_optim.step(actor_closure)        
 
         with torch.no_grad():
 
             # process observations with temporal structure
             T, B = self.obs_buf[list(self.obs_buf.keys())[0]].shape[:2]
             
-            # Reset GRU states to ensure clean computation
-            if self.actor.has_gru:
-                self.actor.reset_gru_states()
-            if self.critic.has_gru:
-                self.critic.reset_gru_states()
-            
             # Process each timestep sequentially to maintain GRU state consistency
             mu_list = []
             sigma_list = []
-            
+
             for t in range(T):
                 obs_t = {k: v[t] for k, v in self.obs_buf.items()}  # Shape: (B, ...)
                 # obs_t = {k: v.unsqueeze(1) for k, v in obs_t.items()}  # Shape: (B, 1, ...)
@@ -606,7 +625,7 @@ class SHAC(Agent):
         next_values = torch.zeros((self.horizon_len + 1, self.num_envs), dtype=torch.float32, device=self.device)
         avg_next_values = torch.zeros((self.horizon_len + 1, self.num_envs), dtype=torch.float32, device=self.device)
 
-        with torch.no_grad():
+        with torch.no_grad(): 
             if self.obs_rms is not None:
                 obs_rms = deepcopy(self.obs_rms)
 
@@ -627,7 +646,7 @@ class SHAC(Agent):
         # collect trajectories and compute actor loss
         returns = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         logprobs = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
-        distr_ents = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        distr_ents = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)                          
 
         for i in range(self.horizon_len):
             # collect data for critic training
@@ -682,15 +701,19 @@ class SHAC(Agent):
 
             done_env_ids = done.nonzero(as_tuple=False).squeeze(-1)
             if len(done_env_ids) > 0:
-                # Reset GRU hidden states for done environments
-                if self.actor.has_gru:
-                    self.actor.reset_gru_states(done_env_ids)
-                if self.critic.has_gru:
-                    self.critic.reset_gru_states(done_env_ids)
+                
+                # reset gru hidden state
+                if self.actor_encoder.use_gru and self.actor_encoder.gru_hidden is not None:
+                    self.actor_encoder.reset_gru_hidden(done_env_ids)
+                if self.encoder.use_gru and self.encoder.gru_hidden is not None:
+                    self.encoder.reset_gru_hidden(done_env_ids)
+                if self.encoder_target.use_gru and self.encoder_target.gru_hidden is not None:                
+                    self.encoder_target.reset_gru_hidden(done_env_ids)
 
                 terminal_obs = extra_info['obs_before_reset']
                 terminal_obs = self._convert_obs(terminal_obs)
 
+                z_target = self.encoder_target(terminal_obs)
                 for id in done_env_ids:
                     nan = False
                     # TODO: some elements of obs_dict (for logging) may be nan, add regex to ignore these
@@ -710,10 +733,11 @@ class SHAC(Agent):
                         next_values[i + 1, id] = 0.0
                         avg_next_values[i + 1, id] = 0.0
                     else:  # otherwise, use terminal value critic to estimate the long-term performance
-                        real_obs = {k: v[id.reshape(1)] for k, v in terminal_obs.items()}
-                        if self.obs_rms is not None:
-                            real_obs = {k: obs_rms[k].normalize(v) for k, v in real_obs.items()}
-                        real_z_target = self.encoder_target(real_obs)
+                        # real_obs = {k: v[id.reshape(1)] for k, v in terminal_obs.items()}
+                        # if self.obs_rms is not None:
+                        #     real_obs = {k: obs_rms[k].normalize(v) for k, v in real_obs.items()}                        
+                        real_z_target = {k: v[id:id+1] for k, v in z_target.items()}
+                        # real_z_target = self.encoder_target(real_obs)
                         real_next_values, avg_real_next_values = self.critic_target(real_z_target, return_type="min_and_avg")
                         real_next_values, avg_real_next_values = real_next_values.squeeze(-1), avg_real_next_values.squeeze(-1)
                         next_values[i + 1, id] = real_next_values
@@ -798,7 +822,17 @@ class SHAC(Agent):
         self.agent_steps += self.horizon_len * self.num_envs
         return returns, logprobs, distr_ents
 
-    def update_critic(self, dataset):
+    def update_critic(self, dataset):        
+        
+        # reset gru hidden states
+        with torch.no_grad():            
+            if self.actor_encoder.use_gru and self.actor_encoder.gru_hidden is not None:
+                self.actor_encoder.reset_gru_hidden(self.num_envs, device=self.device) 
+            if self.encoder.use_gru and self.encoder.gru_hidden is not None:                                                                  
+                self.encoder.reset_gru_hidden(self.num_envs, device=self.device)  
+            if self.encoder_target.use_gru and self.encoder_target.gru_hidden is not None:
+                self.encoder_target.reset_gru_hidden(self.num_envs, device=self.device)
+
         results = collections.defaultdict(list)
         j = 0
         while j < self.critic_iterations:
@@ -848,6 +882,56 @@ class SHAC(Agent):
 
         #     print(f'value iter {j+1}/{self.critic_iterations}, value_loss= {value_loss.item():7.6f}', end='\r')
         # print()
+        return results
+    
+    def update_critic_sequential(self, target_values):
+        
+        results = collections.defaultdict(list)         
+
+        j = 0
+        while j < self.critic_iterations:                       
+    
+            accumulated_critic_loss = 0.0
+                
+            # reset gru hidden states
+            with torch.no_grad():
+                if self.actor_encoder.use_gru:
+                    self.actor_encoder.reset_gru_hidden(self.num_envs, device=self.device)      
+                if self.encoder.use_gru:
+                    self.encoder.reset_gru_hidden(self.num_envs, device=self.device)      
+                if self.encoder_target.use_gru:
+                    self.encoder_target.reset_gru_hidden(self.num_envs, device=self.device)
+
+            # process observations with temporal structure
+            T, B = self.obs_buf[list(self.obs_buf.keys())[0]].shape[:2]
+
+            self.critic_optim.zero_grad()
+            
+            for t in range(T):
+                obs_t = {k: v[t] for k, v in self.obs_buf.items()}  # Shape: (B, ...)
+
+                accumulated_critic_loss += self.compute_critic_loss(obs_t, target_values[t])
+
+            accumulated_critic_loss.backward() # backpropagate gradients from loss to weights
+            
+            grad_norm_before_clip = grad_norm(self.critic.parameters())        
+            grad_norm_after_clip = grad_norm_before_clip
+
+            if self.shac_config.truncate_grads:
+                if self.shac_config.get("max_grad_value", None) is not None:
+                    nn.utils.clip_grad_value_(self.critic.parameters(), self.shac_config.max_grad_value)
+                elif self.shac_config.max_grad_norm is not None:
+                    nn.utils.clip_grad_norm_(self.critic.parameters(), self.shac_config.max_grad_norm)
+                grad_norm_after_clip = grad_norm(self.critic.parameters())
+        
+            self.critic_optim.step()
+            
+            value_loss = (accumulated_critic_loss.detach() / B)
+            results["value_loss"].append(value_loss)
+            results["grad_norm_before_clip/critic"].append(torch.mean(grad_norm_before_clip))
+            results["grad_norm_after_clip/critic"].append(torch.mean(grad_norm_after_clip))
+            j += 1
+            
         return results
 
     def compute_critic_loss(self, obs, target_v, mean=True, reduction='mean'):

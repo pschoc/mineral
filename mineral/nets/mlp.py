@@ -21,7 +21,6 @@ def Act(act_type, **act_kwargs):
     act = Cls(**act_kwargs)
     return act
 
-
 class MLP(nn.Module):
     def __init__(
         self,
@@ -36,13 +35,7 @@ class MLP(nn.Module):
         act_type="ReLU",
         act_kwargs=dict(inplace=True),
         bias=True,
-        plain_last=False,
-        # GRU options
-        use_gru=False,
-        gru_hidden_size=None,
-        gru_num_layers=1,
-        gru_bidirectional=False,
-        gru_batch_first=True,
+        plain_last=False
     ):
         super().__init__()
         if out_dim is not None:
@@ -50,39 +43,9 @@ class MLP(nn.Module):
         self.in_dim = in_dim
         self.out_dim = units[-1]
         self.units = units
-        self.use_gru = use_gru
-        self.gru_batch_first = gru_batch_first
-
-        # Initialize GRU if requested
-        if use_gru:
-            if gru_hidden_size is None:
-                gru_hidden_size = in_dim  # Default to input dimension
-            
-            self.gru_hidden_size = gru_hidden_size
-            self.gru_num_layers = gru_num_layers
-            self.gru_bidirectional = gru_bidirectional
-            
-            # GRU dropout only applies if num_layers > 1
-            gru_dropout = dropout if dropout is not None and gru_num_layers > 1 else 0.0
-            
-            self.gru = nn.GRU(
-                input_size=in_dim,
-                hidden_size=gru_hidden_size,
-                num_layers=gru_num_layers,
-                bias=bias,
-                batch_first=gru_batch_first,
-                dropout=gru_dropout,
-                bidirectional=gru_bidirectional
-            )
-            
-            # Update input dimension for MLP to GRU output size
-            mlp_input_dim = gru_hidden_size * (2 if gru_bidirectional else 1)
-        else:
-            self.gru = None
-            mlp_input_dim = in_dim
-
+    
         # Build MLP layers
-        in_size = mlp_input_dim
+        in_size = in_dim
         layers = []
         for i, out_size in enumerate(units):
             lin = nn.Linear(in_size, out_size, bias=bias)
@@ -111,51 +74,4 @@ class MLP(nn.Module):
         self.mlp = nn.Sequential(*layers)
 
     def forward(self, x, hidden=None):
-        """
-        Forward pass through optional GRU and MLP layers.
-        
-        Args:
-            x: Input tensor. If use_gru=True, expects shape:
-               - (batch_size, seq_len, in_dim) if gru_batch_first=True
-               - (seq_len, batch_size, in_dim) if gru_batch_first=False
-               If use_gru=False, expects (batch_size, in_dim)
-            hidden: Initial hidden state for GRU (optional, only used if use_gru=True)
-            
-        Returns:
-            If use_gru=True: (output, hidden_state)
-            If use_gru=False: output
-        """
-        if self.use_gru and self.gru is not None:
-            # Pass through GRU
-            try:
-                gru_output, hidden_state = self.gru(x, hidden)
-            except Exception as e:
-                print(f"Error occurred in GRU layer: {e}")
-                return None
-
-            if self.gru_batch_first:
-                # Take the last time step: (batch_size, seq_len, hidden_size) -> (batch_size, hidden_size)
-                last_output = gru_output[:, -1, :]
-            else:
-                # Take the last time step: (seq_len, batch_size, hidden_size) -> (batch_size, hidden_size)
-                last_output = gru_output[-1, :, :]
-            
-            # Pass through MLP
-            mlp_output = self.mlp(last_output)
-            return mlp_output, hidden_state
-        else:
-            # Standard MLP forward pass
-            return self.mlp(x)
-    
-    def init_hidden(self, batch_size, device=None):
-        """Initialize hidden state for the GRU (only relevant if use_gru=True)."""
-        if not self.use_gru or self.gru is None:
-            return None
-            
-        num_directions = 2 if self.gru_bidirectional else 1
-        hidden_shape = (self.gru_num_layers * num_directions, batch_size, self.gru_hidden_size)
-        
-        if device is None:
-            return torch.zeros(hidden_shape)
-        else:
-            return torch.zeros(hidden_shape, device=device)
+        return self.mlp(x)

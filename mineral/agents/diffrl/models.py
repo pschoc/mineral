@@ -105,11 +105,6 @@ class Actor(nn.Module):
 
         self.actor_mlp = MLP(state_dim, **mlp_kwargs)
         
-        # Check if MLP has GRU
-        self.has_gru = getattr(self.actor_mlp, 'use_gru', False)
-        if self.has_gru:
-            self.gru_hidden_states = None  # Will be initialized when we know batch size
-        
         self.mu = nn.Linear(self.actor_mlp.out_dim, action_dim)
         if self.fixed_sigma:
             self.sigma = nn.Parameter(torch.ones(action_dim, dtype=torch.float32), requires_grad=True)
@@ -142,62 +137,20 @@ class Actor(nn.Module):
                     dreamerv3_weight_init_trunc_normal_(self.mu, scale=0.01)
                     dreamerv3_weight_init_trunc_normal_(self.sigma, scale=0.01)
 
-    def init_gru_states(self, batch_size, device=None):
-        """Initialize GRU hidden states for all environments."""
-        if self.has_gru:
-            if device is None:
-                device = next(self.parameters()).device
-            self.gru_hidden_states = self.actor_mlp.init_hidden(batch_size, device)
-        
-    def reset_gru_states(self, env_ids=None, device=None):
-        """Reset GRU hidden states for specific environments or all environments."""
-        if not self.has_gru or self.gru_hidden_states is None:
-            return
-            
-        if device is None:
-            device = self.gru_hidden_states.device
-            
-        if env_ids is None:
-            # Reset all environments
-            batch_size = self.gru_hidden_states.shape[1]  # (num_layers*num_directions, batch_size, hidden_size)
-            self.gru_hidden_states = self.actor_mlp.init_hidden(batch_size, device)
-        else:
-            # Reset specific environments
-            if isinstance(env_ids, torch.Tensor):
-                env_ids = env_ids.cpu().numpy()
-            elif not isinstance(env_ids, (list, tuple, np.ndarray)):
-                env_ids = [env_ids]
-                
-            # Zero out hidden states for specified environments
-            self.gru_hidden_states[:, env_ids, :] = 0.0
-
     def forward(self, x):
         if isinstance(x, dict):
             x = x["z"]
-        
-        if self.has_gru:
-            # Initialize GRU states if not already done
-            if self.gru_hidden_states is None:
-                batch_size = x.shape[0]
-                self.init_gru_states(batch_size, x.device)
-            
-            # For GRU-enabled MLP, we need to handle the sequential input
-            # If input is 2D (batch_size, features), expand to (batch_size, 1, features) 
-            if len(x.shape) == 2:
-                x = x.unsqueeze(1)  # Add sequence dimension
-            
-            # Forward pass through MLP with GRU
-            mlp_output, self.gru_hidden_states = self.actor_mlp(x, self.gru_hidden_states)
-        else:
-            # Standard MLP forward pass
-            mlp_output = self.actor_mlp(x)
+
+        mlp_output = self.actor_mlp(x)
         
         mu = self.mu(mlp_output)
         if self.fixed_sigma:
             sigma = self.sigma
         else:
             sigma = self.sigma(mlp_output)
+
         mu, sigma, distr = self.dist(mu, sigma)
+
         return mu, sigma, distr
 
 
@@ -212,11 +165,6 @@ class Critic(nn.Module):
         super().__init__()
         self.critic_mlp = MLP(state_dim, out_dim=1, plain_last=True, **mlp_kwargs)
 
-        # Check if MLP has GRU
-        self.has_gru = getattr(self.critic_mlp, 'use_gru', False)
-        if self.has_gru:
-            self.gru_hidden_states = None  # Will be initialized when we know batch size
-
         self.weight_init = weight_init
         self.reset_parameters()
 
@@ -229,23 +177,8 @@ class Critic(nn.Module):
     def forward(self, x, return_type=None):
         if isinstance(x, dict):
             x = x["z"]
-
-        if self.has_gru:
-            # Initialize GRU states if not already done
-            if self.gru_hidden_states is None:
-                batch_size = x.shape[0]
-                self.init_gru_states(batch_size, x.device)
             
-            # For GRU-enabled MLP, we need to handle the sequential input
-            # If input is 2D (batch_size, features), expand to (batch_size, 1, features) 
-            if len(x.shape) == 2:
-                x = x.unsqueeze(1)  # Add sequence dimension
-            
-            # Forward pass through MLP with GRU
-            x, self.gru_hidden_states = self.critic_mlp(x, self.gru_hidden_states)
-        else:
-            # Standard MLP forward pass
-            x = self.critic_mlp(x)
+        x = self.critic_mlp(x)
 
         if return_type == "all":
             return [x]
@@ -253,37 +186,8 @@ class Critic(nn.Module):
             return x, x.clone()
         else:
             return x
-        
-    def init_gru_states(self, batch_size, device=None):
-        """Initialize GRU hidden states for all environments."""
-        if self.has_gru:
-            if device is None:
-                device = next(self.parameters()).device
-            self.gru_hidden_states = self.critic_mlp.init_hidden(batch_size, device)
-
-    def reset_gru_states(self, env_ids=None, device=None):
-        """Reset GRU hidden states for specific environments or all environments."""
-        if not self.has_gru or self.gru_hidden_states is None:
-            return
-            
-        if device is None:
-            device = self.gru_hidden_states.device
-            
-        if env_ids is None:
-            # Reset all environments
-            batch_size = self.gru_hidden_states.shape[1]  # (num_layers*num_directions, batch_size, hidden_size)
-            self.gru_hidden_states = self.critic_mlp.init_hidden(batch_size, device)
-        else:
-            # Reset specific environments
-            if isinstance(env_ids, torch.Tensor):
-                env_ids = env_ids.cpu().numpy()
-            elif not isinstance(env_ids, (list, tuple, np.ndarray)):
-                env_ids = [env_ids]
-                
-            # Zero out hidden states for specified environments
-            self.gru_hidden_states[:, env_ids, :] = 0.0
-
-
+     
+     
 class EnsembleCritic(nn.Module):
     def __init__(
         self,

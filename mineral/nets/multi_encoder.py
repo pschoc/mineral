@@ -18,6 +18,14 @@ class MultiEncoder(nn.Module):
         mlp_keys = cfg.get('mlp_keys', '^obs$')
         concat_keys = cfg.get('concat_keys', '^cnn$|^pcd$|^mlp$')
 
+        # GRU options
+        self.use_gru = cfg.get('use_gru', False)
+        self.gru_hidden_size = cfg.get('gru_hidden_size', None)
+        self.gru_num_layers = cfg.get('gru_num_layers', 1)
+        self.gru_bidirectional = cfg.get('gru_bidirectional', False)        
+        self.gru_bias = cfg.get('gru_bias', True)
+        self.gru_dropout = cfg.get('gru_dropout', 0.0)
+
         excluded = {}
         shapes = {k: v for k, v in obs_space.items() if k not in excluded and not k.startswith('info_')}
         print('Encoder input shapes:', shapes)
@@ -30,7 +38,7 @@ class MultiEncoder(nn.Module):
         print('Encoder PCD shapes:', self.pcd_shapes)
         print('Encoder MLP shapes:', self.mlp_shapes)
 
-        self.out_dim = 0
+        out_dim = 0
         if self.cnn_shapes:
             in_channels = sum([v[-1] for v in self.cnn_shapes.values()])
             some_shape = list(self.cnn_shapes.values())[0]
@@ -39,7 +47,7 @@ class MultiEncoder(nn.Module):
             cnn, cnn_kwargs = cfg.cnn, cfg.cnn_kwargs
             Cls = getattr(CNN, cnn)
             self._cnn = Cls(in_size, **cnn_kwargs)
-            self.out_dim += self._cnn.out_dim
+            out_dim += self._cnn.out_dim
 
         if self.pcd_shapes:
             pcd_inputs_kwargs = cfg.get('pcd_inputs_kwargs', {})
@@ -48,18 +56,50 @@ class MultiEncoder(nn.Module):
             pcd, pcd_kwargs = cfg.pcd, cfg.pcd_kwargs
             Cls = getattr(PCD, pcd)
             self._pcd = Cls(self.pcd_shapes, **pcd_kwargs)
-            self.out_dim += self._pcd.global_feature_dim
+            out_dim += self._pcd.global_feature_dim
 
         if self.mlp_shapes:
-            tensor_shape = sum([np.prod(v, dtype=int) for v in self.mlp_shapes.values()]).item()
+            tensor_shape = sum([np.prod(v, dtype=int) for v in self.mlp_shapes.values()])
 
             mlp_kwargs = cfg.get('mlp_kwargs', None)
             if mlp_kwargs is not None:
                 self._mlp = MLP(tensor_shape, **mlp_kwargs)
-                self.out_dim += self._mlp.out_dim
+                out_dim += self._mlp.out_dim
             else:
                 self._mlp = None
-                self.out_dim += tensor_shape
+                out_dim += tensor_shape
+
+        # Initialize GRU if requested
+        if self.use_gru:
+            self._gru = nn.GRU(
+                input_size=out_dim,
+                hidden_size=self.gru_hidden_size,
+                num_layers=self.gru_num_layers,
+                bias=self.gru_bias,
+                batch_first=True,
+                dropout=self.gru_dropout if self.gru_num_layers > 1 else 0.0,
+                bidirectional=self.gru_bidirectional
+            )
+            
+            # Initialize hidden state
+            self.gru_hidden = None
+            
+            # GRU output dimension
+            gru_output_dim = self.gru_hidden_size * (2 if self.gru_bidirectional else 1)
+            
+            # Add MLP to reduce GRU output to desired size
+            gru_out_size = cfg.get('gru_out_size', gru_output_dim)
+            if gru_out_size != gru_output_dim:
+                self._gru_mlp = nn.Linear(gru_output_dim, gru_out_size)
+                self.out_dim = gru_out_size
+            else:
+                self._gru_mlp = None
+                self.out_dim = gru_output_dim
+        else:
+            self._gru = None
+            self._gru_mlp = None
+            self.gru_hidden = None
+            self.out_dim = out_dim
 
         print('Encoder out_dim:', self.out_dim)
 
@@ -67,21 +107,13 @@ class MultiEncoder(nn.Module):
         self.weight_init_cnn = cfg.get('weight_init_cnn', None)
         self.weight_init_pcd = cfg.get('weight_init_pcd', None)
         self.weight_init_mlp = cfg.get('weight_init_mlp', None)
+        if self.use_gru:
+            self.weight_init_gru = cfg.get('weight_init_gru', None)
         self.weight_init_fn = weight_init_fn
+
         self.reset_parameters()
 
     def reset_parameters(self):
-        if self.cnn_shapes:
-            if hasattr(self._cnn, "reset_parameters"):
-                self._cnn.reset_parameters()
-        if self.pcd_shapes:
-            if hasattr(self._pcd, "reset_parameters"):
-                self._pcd.reset_parameters()
-        if self.mlp_shapes:
-            if self._mlp is not None:
-                if hasattr(self._mlp, "reset_parameters"):
-                    self._mlp.reset_parameters()
-
         if self.weight_init_fn is not None:
             if self.weight_init is not None:
                 self.weight_init_fn(self, self.weight_init)
@@ -94,6 +126,9 @@ class MultiEncoder(nn.Module):
 
             if self.weight_init_mlp is not None and self.mlp_shapes:
                 self.weight_init_fn(self._mlp, self.weight_init_mlp)
+
+            if self.use_gru and self.weight_init_gru is not None:
+                self.weight_init_fn(self._gru, self.weight_init_gru)
 
     def cnn(self, x):
         inputs = torch.cat([x[k] for k in self.cnn_shapes], -1)
@@ -116,7 +151,67 @@ class MultiEncoder(nn.Module):
         else:
             output = inputs
         return output
+    
+    def gru(self, x):
+        """Process input through GRU if enabled, otherwise return input unchanged."""
+        if self.use_gru and self._gru is not None:
+            # Ensure input has sequence dimension (batch_size, seq_len, features)
+            if len(x.shape) == 2:
+                x = x.unsqueeze(1)  # Add sequence dimension
+            
+            # Pass through GRU
+            try:
+                gru_out, self.gru_hidden = self._gru(x, self.gru_hidden)
+            except Exception as e:
+                print("Error occurred in GRU:", e)
+                gru_out = x  # Fallback to original input on error
 
+            # Take the last output from the sequence
+            gru_out = gru_out[:, -1, :]  # (batch_size, hidden_size * num_directions)
+            
+            # Apply optional MLP projection
+            if self._gru_mlp is not None:
+                gru_out = self._gru_mlp(gru_out)
+                
+            return gru_out
+        else:
+            return x
+    
+    def reset_gru_hidden(self, batch_size_or_done_ids=None, device=None):
+        """Reset the GRU hidden state.
+        
+        Args:
+            batch_size_or_done_ids: Can be either:
+                - int: batch size to reset all hidden states
+                - torch.Tensor: tensor of environment IDs to reset selectively
+                - None: reset to None
+            device: device to create tensors on
+        """
+        if self.use_gru and self._gru is not None:
+            if batch_size_or_done_ids is None:
+                self.gru_hidden = None
+            elif isinstance(batch_size_or_done_ids, int):
+                # Reset all hidden states with given batch size
+                batch_size = batch_size_or_done_ids
+                if device is not None:
+                    num_directions = 2 if self.gru_bidirectional else 1
+                    self.gru_hidden = torch.zeros(
+                        self.gru_num_layers * num_directions,
+                        batch_size,
+                        self.gru_hidden_size,
+                        device=device
+                    )
+                else:
+                    self.gru_hidden = None
+            else:
+                # Reset specific environment IDs
+                done_env_ids = batch_size_or_done_ids
+                if self.gru_hidden is not None and len(done_env_ids) > 0:
+                    # Reset only the hidden states for done environments
+                    self.gru_hidden[:, done_env_ids, :] = 0.0
+                elif self.gru_hidden is None:
+                    # If hidden state doesn't exist yet, we can't selectively reset
+                    print("Warning: Cannot selectively reset GRU hidden states - hidden state is None")
     def forward(self, x):
         outputs = {}
         if self.cnn_shapes:
@@ -128,6 +223,12 @@ class MultiEncoder(nn.Module):
         if self.mlp_shapes:
             outputs['mlp'] = self.mlp(x)
 
-        z = torch.cat([v for k, v in outputs.items() if re.match(self.concat_keys, k)], dim=-1)
+        concat_in = torch.cat([v for k, v in outputs.items() if re.match(self.concat_keys, k)], dim=-1)
+
+        if self.use_gru:
+            z = self.gru(concat_in)
+        else:
+            z = concat_in
+        
         outputs['z'] = z
         return outputs

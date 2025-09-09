@@ -18,13 +18,22 @@ network:
     weight_init: orthogonal
     weight_init_cnn: orthogonal
     weight_init_mlp: orthogonal
+    weight_init_gru: orthogonal
+
+    # GRU options
+    use_gru: False
+    gru_hidden_size: 256
+    gru_output_size: 256
+    gru_num_layers: 1
+    gru_bidirectional: False    
+    gru_bias: True
     
     # CNN configuration for depth processing
     cnn: ConvNet
     cnn_kwargs:
       channels: [64, 128, 256, 512]
-      kernel_sizes: [8, 4, 3, 3]
-      strides: [4, 2, 1, 1]
+      kernel_sizes: [8, 4, 3]
+      strides: [4, 2, 1]
       norm_type: LayerNorm
       act_type: ELU
     
@@ -38,34 +47,24 @@ network:
   actor_kwargs:
     weight_init: orthogonalg1
     mlp_kwargs:
-      units: [64, 32]
+      units: [256, 128]
       norm_type: LayerNorm
-      act_type: ELU
-      # GRU options
-      use_gru: True
-      gru_hidden_size: 128
-      gru_num_layers: 2
-      gru_bidirectional: False
-      gru_batch_first: True    
+      act_type: ELU       
     fixed_sigma: False
   tanh_clamp: True
   
   critic: Critic
   critic_kwargs:
     mlp_kwargs:
-      units: [64, 32]  # Much larger capacity
+      units: [256, 128] 
       norm_type: LayerNorm
       act_type: ELU    
-      # Add GRU for temporal value estimation
-      use_gru: True
-      gru_hidden_size: 128 
-      gru_num_layers: 2
-      gru_bidirectional: False
-      gru_batch_first: True    
 
 shac:
   multi_gpu: ${...multi_gpu}
   num_actors: ${...task.env.numEnvs}
+
+  critic_detach_encoder: False  # This will exclude encoder from critic optimizer
 
   reward_shaper:
     fn: scale
@@ -83,10 +82,10 @@ shac:
   normalize_ret: False
 
   optim_type: Adam
-  actor_optim_kwargs: {lr: 2e-3, betas: [0.7, 0.95]}
-  critic_optim_kwargs: {lr: 5e-4, betas: [0.7, 0.95]}
+  actor_optim_kwargs: {lr: 1e-5, betas: [0.7, 0.95]}
+  critic_optim_kwargs: {lr: 1e-5, betas: [0.7, 0.95]}
   lr_schedule: linear  # linear | constant
-  target_critic_alpha: 0.6 # 0.995
+  target_critic_alpha: 0.2 # 0.995
   no_target_critic: False
   max_grad_norm: 1.0
   truncate_grads: True

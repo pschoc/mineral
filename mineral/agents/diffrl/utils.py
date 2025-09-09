@@ -31,10 +31,18 @@ def soft_update(module, module_target, alpha: float):
 def grad_norm(params):
     grad_norm = 0.0
     for p in params:
-        if p.grad is not None and not torch.isnan(p.grad).any():
-            grad_norm += torch.sum(p.grad**2)
-        if torch.isnan(p.grad).any():
-            grad_norm += torch.sum(torch.randn_like(p.grad)**2)
+        if p.grad is not None:
+            if not torch.isnan(p.grad).any():
+                grad_norm += torch.sum(p.grad**2)
+            else:
+                # Handle NaN gradients by replacing with random noise
+                grad_norm += torch.sum(torch.randn_like(p.grad)**2)
+        # If p.grad is None, skip this parameter (contributes 0 to norm)
+    
+    # Convert to tensor before sqrt
+    if isinstance(grad_norm, float):
+        grad_norm = torch.tensor(grad_norm, device='cuda' if torch.cuda.is_available() else 'cpu')
+    
     return torch.sqrt(grad_norm)
 
 

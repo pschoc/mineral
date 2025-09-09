@@ -4,14 +4,17 @@ name: WarpDrone
 env:
   env_suite: drone_parcour
   env_name: DroneParcour
-  numEnvs: 32
+  numEnvs: 1
   render: True
   debug_pov: True
   render_mode: opengl
-  render_fps: 1
+  frame_fps: 10
+  solver_fps: 400
+  max_episode_duration: 20.0
+  render_fps: 10
   randomize: True
   no_grad: False
-  no_env_offset: True
+  no_env_offset: False  
   max_episode_length: 1000
   num_eval_episodes: 100
   early_termination: True  
@@ -23,13 +26,13 @@ env:
   max_target_lin_vel: 4.0
   max_target_ang_vel: 1.0
 
-  use_depth_observations: True
-  use_collision_distances: True
-  has_static_obstacles: True
+  use_depth_observations: False
+  use_collision_distances: False
+  has_static_obstacles: False # keep false for now as it causes issues right now at env reset (not understood yet, leads to nan observations)
 
   # depth camera settings
-  cam_width: 24
-  cam_height: 16
+  cam_width: 128
+  cam_height: 64
   cam_fov_x_deg: 120.0
   cam_fov_y_deg: 90.0
   cam_min_depth: 0.0
@@ -45,10 +48,10 @@ env:
   is_render_targets: True  # Whether to render target coordinate frames
 
   # Arena and environment bounds: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
-  spawn_bounds: [[-6.0, -3.0], [2.0, 2.0], [-8.0, 8.0]]  # Where drone can spawn
-  room_bounds: [[-16.0, 16.0], [0.0, 6.0], [-8.0, 8.0]]  # Physical arena limits
-  arena_bounds: [[-17.0, 17.0], [0.0, 6.0], [-9.0, 9.0]]  # Physical arena limits
-  target_bounds: [[13.0, 16.0], [1.0, 4.0], [-8.0, 8.0]]  # Where targets spawn
+  spawn_bounds: [[-10.0, 0.0], [2.0, 2.0], [-7.0, 7.0]]  # Where drone can spawn
+  room_bounds: [[-10.0, 10.0], [0.0, 6.0], [-5.0, 5.0]]  # Physical arena limits
+  arena_bounds: [[-15.0, 15.0], [-1.0, 6.0], [-9.0, 9.0]]  # Physical arena limits
+  target_bounds: [[5.0, 10.0], [1.0, 4.0], [-7.0, 7.0]]  # Where targets spawn
 
   # Drone spawn parameters
   initial_drone_attitude_euler_deg: [30.0, 30.0, 30.0]  # Initial attitude in degrees
@@ -71,9 +74,9 @@ env:
   three_sigma_target_ang_vel: [0.0, 0.0, 0.0]  # rad/s
 
   # static obstacle settings
-  num_static_obstacles: 0
-  obstacle_min_size: 1.0
-  obstacle_max_size: 6.0
+  num_static_obstacles: 5
+  obstacle_min_size: 0.3
+  obstacle_max_size: 1.0
   
   # Drone construction parameters
   # Carbon fiber properties
