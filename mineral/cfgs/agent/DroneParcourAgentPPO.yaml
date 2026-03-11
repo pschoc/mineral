@@ -1,8 +1,8 @@
 seed: ${..seed}
 algo: PPO
 
-print_every: 1
-ckpt_every: 200
+print_every: 10
+ckpt_every: 500
 
 tracker_len: 100
 metrics_kwargs:
@@ -17,7 +17,7 @@ network:
   actor_critic_kwargs:
     separate_value_mlp: True
     mlp_kwargs:
-      units: [512, 256, 64]
+      units: [512, 256, 128]
 
     #   norm_type: null
     #   act_type: ELU
@@ -32,30 +32,30 @@ network:
 ppo:
   multi_gpu: ${...multi_gpu}
   num_actors: ${...task.env.numEnvs}
-  normalize_value: False
+  normalize_value: True
   value_bootstrap: True
   reward_shaper:
     fn: scale
-    scale: 0.01
+    scale: 1.0
   clip_value_loss: False
   normalize_advantage: True
   gamma: 0.99
   tau: 0.95
-  optim_type: Adam
+  optim_type: AdamW
   optim_kwargs:
-    lr: 5e-3
-    eps: 1e-3
+    lr: 5e-4
+    eps: 1e-5
   lr_schedule: kl  # 'fixed' | 'linear' | 'kl' | 'cos'
-  kl_threshold: 0.016
-  entropy_coef: 0.0
+  kl_threshold: 0.008
+  entropy_coef: 0.005
   e_clip: 0.2
   use_smooth_clamp: False
   critic_coef: 4
   bounds_loss_coef: 0.0001
   bounds_type: bound
-  max_grad_norm: 1.0
+  max_grad_norm: 0.5
   truncate_grads: True
-  horizon_len: 1000
-  minibatch_size: 500
-  mini_epochs: 5
-  max_agent_steps: 700e6
+  horizon_len: 32
+  minibatch_size: 8192
+  mini_epochs: 4
+  max_agent_steps: 100e6

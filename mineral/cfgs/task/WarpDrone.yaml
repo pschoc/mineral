@@ -4,35 +4,45 @@ name: WarpDrone
 env:
   env_suite: drone_parcour
   env_name: DroneParcour
-  numEnvs: 1
+  numEnvs: 512
+  render_num_envs: 2
   render: True
-  debug_pov: True
+  debug_pov: False
   render_mode: opengl
-  frame_fps: 10
-  solver_fps: 400
-  max_episode_duration: 20.0
-  render_fps: 10
+  frame_fps: 50
+  solver_fps: 100
+  max_episode_duration: 8.0
+  render_fps: 50
   randomize: True
   no_grad: False
-  no_env_offset: False  
-  max_episode_length: 1000
-  num_eval_episodes: 100
+  no_env_offset: True
+  max_episode_length: 400
+  num_eval_episodes: 32
   early_termination: True  
   integrator: euler
   separate_collision_group_per_env: True
   ground_plane: True
 
   gravity: -9.81
-  max_target_lin_vel: 4.0
-  max_target_ang_vel: 1.0
+
+  rotor_cmd_min: 0.0
+  rotor_cmd_max: 1.0
+
+  # INDI params
+  # Policy action now commands [a_Bx, a_By, a_Bz, alpha_Bx, alpha_By, alpha_Bz] in normalized [-1, 1]
+  max_cmd_lin_acc: 6.0     # m/s^2 scaling for action[:, 0:3]
+  max_cmd_ang_acc: 6.0     # rad/s^2 scaling for action[:, 3:6]
+  indi_k: 1.0              # incremental update gain for omega^2 command
+  indi_alpha_lp: 0.2       # low-pass factor for measured acceleration derivatives
+  indi_max_delta_ratio: 0.2 # per-step clamp as ratio of max omega^2
 
   use_depth_observations: False
   use_collision_distances: False
   has_static_obstacles: False # keep false for now as it causes issues right now at env reset (not understood yet, leads to nan observations)
 
   # depth camera settings
-  cam_width: 128
-  cam_height: 64
+  cam_width: 64
+  cam_height: 42
   cam_fov_x_deg: 120.0
   cam_fov_y_deg: 90.0
   cam_min_depth: 0.0
@@ -48,20 +58,20 @@ env:
   is_render_targets: True  # Whether to render target coordinate frames
 
   # Arena and environment bounds: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
-  spawn_bounds: [[-10.0, 0.0], [2.0, 2.0], [-7.0, 7.0]]  # Where drone can spawn
-  room_bounds: [[-10.0, 10.0], [0.0, 6.0], [-5.0, 5.0]]  # Physical arena limits
-  arena_bounds: [[-15.0, 15.0], [-1.0, 6.0], [-9.0, 9.0]]  # Physical arena limits
-  target_bounds: [[5.0, 10.0], [1.0, 4.0], [-7.0, 7.0]]  # Where targets spawn
+  spawn_bounds: [[-2.0, 2.0], [1.5, 2.0], [-2.0, 2.0]]  # [x, y(height), z]
+  room_bounds: [[-5.0, 5.0], [0.0, 5.0], [-5.0, 5.0]]
+  arena_bounds: [[-6.0, 6.0], [0.0, 5.0], [-6.0, 6.0]]
+  target_bounds: [[-4.0, 4.0], [1.5, 3.5], [-4.0, 4.0]]  # [x, y(height), z]
 
   # Drone spawn parameters
-  initial_drone_attitude_euler_deg: [30.0, 30.0, 30.0]  # Initial attitude in degrees
+  initial_drone_attitude_euler_deg: [0.0, 0.0, 0.0]  # Initial attitude in degrees
   initial_drone_lin_vel: [0.0, 0.0, 0.0]  # Initial linear velocity in m/s
   initial_drone_ang_vel: [0.0, 0.0, 0.0]  # Initial angular velocity in rad/s
 
   # uncertainty at spawn
   three_sigma_initial_attitude_deg: [0.0, 0.0, 0.0]  # [roll, pitch, yaw] in degrees
-  three_sigma_initial_lin_vel: [1.0, 1.0, 1.0]  # m/s
-  three_sigma_initial_ang_vel: [1.0, 1.0, 1.0]  # rad/s
+  three_sigma_initial_lin_vel: [0.1, 0.1, 0.1]  # m/s
+  three_sigma_initial_ang_vel: [0.1, 0.1, 0.1]  # rad/s
 
   # Target parameters
   target_attitude_euler_deg: [0.0, 0.0, 0.0]  # Initial attitude in degrees
@@ -69,14 +79,15 @@ env:
   target_ang_vel: [0.0, 0.0, 0.0]  # Initial angular velocity in rad/s
 
   # uncertainty at target
-  three_sigma_target_attitude_deg: [180.0, 180.0, 180.0]  # [roll, pitch, yaw] in degrees
+  three_sigma_target_attitude_deg: [5.0, 5.0, 20.0]  # [roll, pitch, yaw] in degrees
   three_sigma_target_lin_vel: [0.0, 0.0, 0.0]  # m/s
   three_sigma_target_ang_vel: [0.0, 0.0, 0.0]  # rad/s
 
   # static obstacle settings
-  num_static_obstacles: 5
+  num_static_obstacles: 0
   obstacle_min_size: 0.3
   obstacle_max_size: 1.0
+  termination_distance: 0.2
   
   # Drone construction parameters
   # Carbon fiber properties
@@ -87,15 +98,15 @@ env:
   
   # Main body specifications
   body_dimensions: [0.15, 0.15, 0.1]  # [length, width, height] in meters
-  body_mass: 5.000  # 1kg (battery + electronics + payload)
+  body_mass: 5.000  # 5kg (battery + electronics + payload)
   
   # motor specs
   motor_specs: [0.06, 0.02, 0.200]  # [diameter, thickness, weight in kg]
-  tilt_angle_deg: 45.0 
+  tilt_angle_deg: 15.0 
   
   # Propeller dimensions (diameter x pitch in inches)
-  prop_diameter_inch: 13.0 
-  prop_pitch_inch: 6.1  
+  prop_diameter_inch: 15.0 
+  prop_pitch_inch: 3.1  
   prop_thickness: 0.01 
   prop_weight: 0.030 
   

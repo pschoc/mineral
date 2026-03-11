@@ -5,7 +5,7 @@ print_every: 1
 ckpt_every: 100
 
 network:
-  normalize_input: False  
+  normalize_input: True  
  
   encoder: MultiEncoder
   encoder_kwargs:
@@ -50,6 +50,7 @@ network:
       units: [256, 128]
       norm_type: LayerNorm
       act_type: ELU       
+    dist_kwargs: {dist_type: dreamerv3_normal, minstd: 0.1, maxstd: 1.0}
     fixed_sigma: False
   tanh_clamp: True
   
@@ -78,14 +79,14 @@ shac:
   gamma: 0.99
   critic_method: td-lambda  # td-lambda | one-step
   lambda: 0.95
-  critic_iterations: 16
+  critic_iterations: 4
   normalize_ret: False
 
   optim_type: Adam
-  actor_optim_kwargs: {lr: 1e-5, betas: [0.7, 0.95]}
-  critic_optim_kwargs: {lr: 1e-5, betas: [0.7, 0.95]}
+  actor_optim_kwargs: {lr: 1e-3, betas: [0.7, 0.95]}
+  critic_optim_kwargs: {lr: 1e-3, betas: [0.7, 0.95]}
   lr_schedule: linear  # linear | constant
-  target_critic_alpha: 0.2 # 0.995
+  target_critic_alpha: 0.2
   no_target_critic: False
   max_grad_norm: 1.0
   truncate_grads: True
